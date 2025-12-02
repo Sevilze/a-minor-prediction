@@ -1,56 +1,248 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Icon } from './components/Icon';
 import { WaveformDisplay } from './components/WaveformDisplay';
 import { ChordStrip } from './components/ChordStrip';
-import { PROJECTS, CHORDS, WAVEFORM_DATA, BPM, TIME_SIGNATURE } from './constants';
+import { Project, ChordPrediction, WaveformData } from './types';
+import api, { ApiProject, ApiChordPrediction, ApiWaveformData } from './services/api';
+import authService, { AuthUser } from './services/auth';
+import { useAudioPlayer } from './hooks/useAudioPlayer';
+import { generateWaveformData } from './constants';
+
+const mapApiProjectToProject = (apiProject: ApiProject): Project => ({
+  id: apiProject.id,
+  name: apiProject.name,
+  duration: apiProject.duration,
+  durationSeconds: apiProject.duration_seconds,
+  size: apiProject.size,
+  status: apiProject.status as 'completed' | 'processing' | 'error',
+  type: apiProject.type as Project['type'],
+  bpm: apiProject.bpm,
+  timeSignature: apiProject.time_signature,
+});
+
+const mapApiChords = (chords: ApiChordPrediction[]): ChordPrediction[] =>
+  chords.map(c => ({
+    timestamp: c.timestamp,
+    formattedTime: c.formatted_time,
+    chord: c.chord,
+    confidence: c.confidence,
+  }));
+
+const mapApiWaveform = (waveform: ApiWaveformData[]): WaveformData[] =>
+  waveform.map(w => ({
+    time: w.time,
+    amplitude: w.amplitude,
+  }));
 
 const App: React.FC = () => {
-  const [activeProjectId, setActiveProjectId] = useState<string>(PROJECTS[1].id);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(8); // Start at 8s
-  const [duration, setDuration] = useState(143); // 2:23 in seconds
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Mobile sidebar state
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeProjectData, setActiveProjectData] = useState<{
+    chords: ChordPrediction[];
+    waveform: WaveformData[];
+  } | null>(null);
   
-  // Loop State
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
   const [isLooping, setIsLooping] = useState(false);
   const [loopStart, setLoopStart] = useState(0);
-  const [loopEnd, setLoopEnd] = useState(143);
-
-  // Zoom State
+  const [loopEnd, setLoopEnd] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
-
-  const activeProject = PROJECTS.find(p => p.id === activeProjectId) || PROJECTS[0];
   
-  // Audio Loop Logic
-  useEffect(() => {
-    let interval: number;
-    if (isPlaying) {
-      interval = window.setInterval(() => {
-        setCurrentTime(prev => {
-          // Handle Loop
-          if (isLooping && prev >= loopEnd) {
-            return loopStart;
-          }
+  const [isUploading, setIsUploading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
 
-          // End of Track
-          if (prev >= duration) {
-            // If looping is on but we are somehow past loopEnd (or loopEnd is duration), loop back
-            if (isLooping) return loopStart;
-            
-            setIsPlaying(false);
-            return prev; // Stop at end
-          }
-          return prev + 0.1;
-        });
-      }, 100);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  const activeProject = projects.find(p => p.id === activeProjectId);
+  const duration = activeProject?.durationSeconds || 0;
+  const bpm = activeProject?.bpm || 120;
+  const timeSignature = activeProject?.timeSignature || 4;
+  const chords = activeProjectData?.chords || [];
+  const waveformData = activeProjectData?.waveform || generateWaveformData(150);
+
+  const audioPlayerRef = useRef<{
+    seek: (time: number) => void;
+    play: () => Promise<void>;
+  } | null>(null);
+
+  const handleTimeUpdate = useCallback((time: number) => {
+    if (isLooping && time >= loopEnd) {
+      audioPlayerRef.current?.seek(loopStart);
+    } else {
+      setCurrentTime(time);
     }
-    return () => clearInterval(interval);
-  }, [isPlaying, duration, isLooping, loopStart, loopEnd]);
+  }, [isLooping, loopStart, loopEnd]);
+
+  const handleAudioEnded = useCallback(() => {
+    if (isLooping) {
+      audioPlayerRef.current?.seek(loopStart);
+      audioPlayerRef.current?.play();
+    }
+  }, [isLooping, loopStart]);
+
+  const audioPlayer = useAudioPlayer({
+    projectId: activeProjectId,
+    onTimeUpdate: handleTimeUpdate,
+    onEnded: handleAudioEnded,
+    onError: (err) => setError(err),
+  });
+
+  audioPlayerRef.current = audioPlayer;
+
+  const isPlaying = audioPlayer.isPlaying;
+
+  useEffect(() => {
+    const initAuth = async () => {
+      const callbackToken = authService.handleAuthCallback();
+      if (callbackToken) {
+        const currentUser = await authService.getCurrentUser();
+        setUser(currentUser);
+      } else if (authService.isAuthenticated()) {
+        const currentUser = await authService.getCurrentUser();
+        setUser(currentUser);
+      }
+      setAuthChecked(true);
+    };
+    initAuth();
+  }, []);
+
+  useEffect(() => {
+    const checkBackend = async () => {
+      try {
+        const health = await api.healthCheck();
+        setBackendStatus(health.status === 'ok' ? 'connected' : 'disconnected');
+      } catch {
+        setBackendStatus('disconnected');
+      }
+    };
+    checkBackend();
+  }, []);
+
+  useEffect(() => {
+    const loadProjects = async () => {
+      if (backendStatus !== 'connected' || !authChecked) return;
+      if (!user) {
+        setIsLoading(false);
+        return;
+      }
+      
+      try {
+        setIsLoading(true);
+        const response = await api.listProjects();
+        const mappedProjects = response.projects.map(p => ({
+          id: p.id,
+          name: p.name,
+          duration: p.duration,
+          size: p.size,
+          status: p.status as 'completed' | 'processing' | 'error',
+          type: p.type as Project['type'],
+        }));
+        setProjects(mappedProjects);
+        
+        if (mappedProjects.length > 0 && !activeProjectId) {
+          setActiveProjectId(mappedProjects[0].id);
+        }
+      } catch (err) {
+        setError('Failed to load projects');
+        console.error(err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadProjects();
+  }, [backendStatus, authChecked, user]);
+
+  useEffect(() => {
+    const loadProjectData = async () => {
+      if (!activeProjectId || backendStatus !== 'connected') return;
+      
+      try {
+        const response = await api.getProject(activeProjectId);
+        const project = mapApiProjectToProject(response.project);
+        
+        setProjects(prev => prev.map(p => 
+          p.id === activeProjectId ? { ...p, ...project } : p
+        ));
+        
+        setActiveProjectData({
+          chords: mapApiChords(response.chords),
+          waveform: mapApiWaveform(response.waveform),
+        });
+        
+        setCurrentTime(0);
+        setLoopStart(0);
+        setLoopEnd(response.project.duration_seconds);
+      } catch (err) {
+        console.error('Failed to load project data:', err);
+      }
+    };
+    
+    loadProjectData();
+  }, [activeProjectId, backendStatus]);
+
+  const handleFileUpload = useCallback(async (file: File) => {
+    if (backendStatus !== 'connected') {
+      setError('Backend is not connected. Please start the server.');
+      return;
+    }
+    
+    setIsUploading(true);
+    setError(null);
+    
+    try {
+      const response = await api.uploadAudio(file);
+      const project = mapApiProjectToProject(response.project);
+      
+      setProjects(prev => [project, ...prev]);
+      setActiveProjectId(project.id);
+      setActiveProjectData({
+        chords: mapApiChords(response.chords),
+        waveform: mapApiWaveform(response.waveform),
+      });
+      
+      setCurrentTime(0);
+      setLoopStart(0);
+      setLoopEnd(response.project.duration_seconds);
+      setIsSidebarOpen(false);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+      console.error('Upload error:', err);
+    } finally {
+      setIsUploading(false);
+    }
+  }, [backendStatus]);
+
+  const handleProjectDelete = useCallback(async (projectId: string) => {
+    if (backendStatus !== 'connected') return;
+    
+    try {
+      await api.deleteProject(projectId);
+      setProjects(prev => prev.filter(p => p.id !== projectId));
+      
+      if (activeProjectId === projectId) {
+        const remaining = projects.filter(p => p.id !== projectId);
+        setActiveProjectId(remaining.length > 0 ? remaining[0].id : null);
+        if (remaining.length === 0) {
+          setActiveProjectData(null);
+        }
+      }
+    } catch (err) {
+      console.error('Delete error:', err);
+    }
+  }, [activeProjectId, projects, backendStatus]);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTime = parseFloat(e.target.value);
-    setCurrentTime(newTime);
+    const time = parseFloat(e.target.value);
+    setCurrentTime(time);
+    audioPlayer.seek(time);
   };
 
   const formatTime = (seconds: number) => {
@@ -60,54 +252,44 @@ const App: React.FC = () => {
   };
 
   const skip = (amount: number) => {
-    setCurrentTime(prev => {
-      const next = prev + amount;
-      // If looping, respect loop bounds when skipping forward/back? 
-      // Usually skip ignores loop unless it lands inside? Let's keep simple clamping.
-      return Math.min(Math.max(next, 0), duration);
-    });
+    const newTime = Math.min(Math.max(currentTime + amount, 0), duration);
+    setCurrentTime(newTime);
+    audioPlayer.seek(newTime);
   };
 
-  // Loop Setters
-  const toggleLoop = () => {
-    if (!isLooping) {
-      // If enabling loop and current time is outside default bounds, reset bounds to track
-      if (loopStart === 0 && loopEnd === duration) {
-         // Standard enable
-      }
-    }
-    setIsLooping(!isLooping);
-  };
+  const toggleLoop = () => setIsLooping(!isLooping);
 
   const setLoopIn = () => {
-    // Ensure start is before end
-    const newStart = Math.min(currentTime, loopEnd - 1); // Min 1 sec loop
+    const newStart = Math.min(currentTime, loopEnd - 1);
     setLoopStart(Math.max(0, newStart));
     if (!isLooping) setIsLooping(true);
   };
 
   const setLoopOut = () => {
-    // Ensure end is after start
     const newEnd = Math.max(currentTime, loopStart + 1);
     setLoopEnd(Math.min(duration, newEnd));
     if (!isLooping) setIsLooping(true);
   };
 
-  // Zoom Handlers
-  const handleZoomIn = () => {
-    setZoomLevel(prev => Math.min(prev * 1.5, 8)); // Max zoom 8x
+  const handleZoomIn = () => setZoomLevel(prev => Math.min(prev * 1.5, 8));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(prev / 1.5, 1));
+
+  const handleLogin = () => {
+    window.location.href = api.getLoginUrl();
   };
 
-  const handleZoomOut = () => {
-    setZoomLevel(prev => Math.max(prev / 1.5, 1)); // Min zoom 1x
+  const handleLogout = async () => {
+    await authService.logout();
+    setUser(null);
+    setProjects([]);
+    setActiveProjectId(null);
+    setActiveProjectData(null);
   };
 
   return (
     <div className="flex flex-col h-full bg-background-dark text-white overflow-hidden font-display">
-      {/* Header */}
       <header className="flex flex-shrink-0 w-full items-center justify-between border-b border-white/10 px-4 md:px-6 py-3 bg-background-dark z-20 relative">
         <div className="flex items-center gap-3 md:gap-4">
-          {/* Mobile Menu Button */}
           <button 
             onClick={() => setIsSidebarOpen(true)}
             className="md:hidden p-1 -ml-2 text-white/80 hover:text-white"
@@ -124,15 +306,61 @@ const App: React.FC = () => {
           <h2 className="text-white text-lg font-bold leading-tight tracking-[-0.015em]">ChordAI</h2>
         </div>
         <div className="flex items-center gap-4 md:gap-8">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${
+              backendStatus === 'connected' ? 'bg-green-500' : 
+              backendStatus === 'checking' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+            }`} />
+            <span className="text-xs text-white/50 hidden sm:inline">
+              {backendStatus === 'connected' ? 'API Connected' : 
+               backendStatus === 'checking' ? 'Connecting...' : 'API Offline'}
+            </span>
+          </div>
           <nav className="flex items-center gap-4 md:gap-6">
             <a href="#" className="hidden sm:block text-white/60 hover:text-white text-sm font-medium transition-colors">About</a>
             <a href="#" className="text-white/60 hover:text-white text-sm font-medium transition-colors">Help</a>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  {user.picture_url ? (
+                    <img src={user.picture_url} alt={user.name} className="w-7 h-7 rounded-full" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium text-primary">
+                      {user.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <span className="text-sm text-white/80 hidden md:inline">{user.name}</span>
+                </div>
+                <button 
+                  onClick={handleLogout}
+                  className="text-white/60 hover:text-white text-sm font-medium transition-colors"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : authChecked && backendStatus === 'connected' ? (
+              <button 
+                onClick={handleLogin}
+                className="flex items-center gap-2 rounded-lg bg-primary hover:bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors"
+              >
+                <Icon name="login" className="text-lg" />
+                Sign In
+              </button>
+            ) : null}
           </nav>
         </div>
       </header>
 
+      {error && (
+        <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 flex items-center justify-between">
+          <p className="text-red-400 text-sm">{error}</p>
+          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300">
+            <Icon name="close" className="text-lg" />
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden relative">
-        {/* Sidebar Backdrop (Mobile) */}
         {isSidebarOpen && (
           <div 
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 md:hidden"
@@ -140,230 +368,257 @@ const App: React.FC = () => {
           />
         )}
 
-        {/* Sidebar */}
         <Sidebar 
-          projects={PROJECTS} 
+          projects={projects} 
           activeProjectId={activeProjectId} 
           onProjectSelect={(id) => {
             setActiveProjectId(id);
             setIsSidebarOpen(false);
           }}
+          onProjectDelete={handleProjectDelete}
+          onFileUpload={handleFileUpload}
+          isUploading={isUploading}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
+          isAuthenticated={!!user}
+          onLoginClick={handleLogin}
         />
 
-        {/* Main Content */}
         <main className="flex flex-1 flex-col min-w-0 bg-background-dark relative">
-          
-          {/* Content Header */}
-          <div className="flex flex-col pt-4 px-4 pb-2 md:pt-8 md:px-8 md:pb-4 gap-4 md:gap-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex flex-col gap-2">
-                <p className="tracking-tight text-xl md:text-3xl font-bold text-white truncate">{activeProject.name}</p>
-                <div className="flex flex-wrap items-center gap-3 text-xs md:text-sm font-normal text-white/60">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.4)]"></span>
-                    Analysis complete
-                  </span>
-                  <span className="hidden md:inline text-white/20">•</span>
-                  {/* Detected Tempo/BPM */}
-                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/5" title="Detected Tempo">
-                     <Icon name="metronome" className="text-sm text-primary" />
-                     <span className="text-white/90 font-mono font-medium">{BPM}</span>
-                     <span className="text-[10px] uppercase tracking-wider">BPM</span>
-                  </span>
-                  {/* Detected Time Signature */}
-                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/5" title="Detected Time Signature">
-                     <Icon name="music_note" className="text-sm text-white/60" />
-                     <span className="text-white/90 font-mono font-medium">{TIME_SIGNATURE}/4</span>
-                     <span className="text-[10px] uppercase tracking-wider">Time</span>
-                  </span>
+          {!activeProject ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+              <Icon name="library_music" className="text-6xl text-white/10 mb-4" />
+              <h3 className="text-xl font-semibold text-white/60 mb-2">No Project Selected</h3>
+              <p className="text-white/40 mb-6 max-w-md">
+                Upload an audio file to analyze its chord progression using AI. 
+                Supported formats: MP3, WAV, FLAC, AIFF, OGG, M4A.
+              </p>
+              {backendStatus === 'disconnected' && (
+                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4 max-w-md">
+                  <p className="text-yellow-400 text-sm">
+                    Backend server is not running. Start it with:
+                  </p>
+                  <code className="block mt-2 bg-black/30 rounded px-3 py-2 text-xs text-white/70 font-mono">
+                    cd backend && python -m uvicorn app.main_aws:app --reload
+                  </code>
                 </div>
-              </div>
-              <div className="flex items-center gap-3 w-full md:w-auto">
-                <button className="flex-1 md:flex-none justify-center flex items-center gap-2 rounded-lg bg-white/5 border border-white/10 px-3 py-2 md:px-4 text-sm font-semibold text-white transition-all hover:bg-white/10 hover:border-white/20 active:scale-95">
-                  <Icon name="content_copy" className="text-lg" /> 
-                  <span className="hidden sm:inline">Copy Chords</span>
-                  <span className="sm:hidden">Copy</span>
-                </button>
-                <button className="flex-1 md:flex-none justify-center flex items-center gap-2 rounded-lg bg-primary hover:bg-blue-600 px-3 py-2 md:px-4 text-sm font-semibold text-white transition-colors shadow-lg shadow-primary/20">
-                  <Icon name="download" className="text-lg" /> 
-                  <span className="hidden sm:inline">Export MIDI</span>
-                  <span className="sm:hidden">Export</span>
-                </button>
-              </div>
+              )}
+              {backendStatus === 'connected' && !user && authChecked && (
+                <div className="bg-primary/10 border border-primary/20 rounded-lg p-6 max-w-md">
+                  <p className="text-white/80 text-sm mb-4">
+                    Sign in to upload and analyze your audio files.
+                  </p>
+                  <button 
+                    onClick={handleLogin}
+                    className="flex items-center gap-2 mx-auto rounded-lg bg-primary hover:bg-blue-600 px-6 py-2 text-sm font-medium text-white transition-colors"
+                  >
+                    <Icon name="login" className="text-lg" />
+                    Sign in with Google
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-
-          {/* Visualizer Area */}
-          <div className="flex-1 flex flex-col px-4 pb-4 md:px-8 min-h-0">
-            <div className="flex-grow rounded-xl md:rounded-2xl bg-[#0b1117] border border-white/5 relative overflow-hidden group shadow-2xl">
-              
-              {/* Graph Layer */}
-              <div className="absolute inset-0 z-0">
-                 <WaveformDisplay 
-                   data={WAVEFORM_DATA} 
-                   isPlaying={isPlaying} 
-                   bpm={BPM}
-                   timeSignature={TIME_SIGNATURE}
-                   zoomLevel={zoomLevel}
-                   currentTime={currentTime}
-                 />
-              </div>
-
-              {/* Controls Overlay */}
-              <div className="absolute inset-0 z-10 flex items-center justify-center gap-4 md:gap-8 pointer-events-none">
-                
-                {/* Zoom Controls (Top Right) */}
-                <div className="absolute top-4 right-4 flex items-center bg-black/40 backdrop-blur-md rounded-lg border border-white/10 pointer-events-auto">
-                  <button 
-                    onClick={handleZoomOut}
-                    disabled={zoomLevel <= 1}
-                    className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-l-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-                    title="Zoom Out"
-                  >
-                    <Icon name="zoom_out" className="text-xl" />
-                  </button>
-                  <div className="w-px h-4 bg-white/10"></div>
-                  <button 
-                    onClick={handleZoomIn}
-                    disabled={zoomLevel >= 8}
-                    className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-r-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
-                    title="Zoom In"
-                  >
-                    <Icon name="zoom_in" className="text-xl" />
-                  </button>
-                </div>
-
-                {/* Playback Controls (Center) */}
-                <button 
-                  onClick={toggleLoop}
-                  className={`pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-8 h-8 md:w-12 md:h-12 border transition-all transform hover:scale-105 active:scale-95 ${isLooping ? 'bg-primary text-white border-primary shadow-[0_0_15px_rgba(19,127,236,0.5)]' : 'bg-black/30 backdrop-blur-md border-white/10 text-white/60 hover:bg-white/10 hover:text-white'}`}
-                  title="Toggle Loop"
-                >
-                  <Icon name="repeat" className="text-lg md:text-2xl" />
-                </button>
-
-                <button 
-                  onClick={() => skip(-10)}
-                  className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-10 h-10 md:w-14 md:h-14 bg-black/30 backdrop-blur-md border border-white/10 hover:bg-white/10 transition-all transform hover:scale-105 active:scale-95"
-                >
-                  <Icon name="replay_10" className="text-xl md:text-3xl text-white/90" />
-                </button>
-                
-                <button 
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-16 h-16 md:w-24 md:h-24 bg-white text-background-dark hover:scale-105 transition-all shadow-[0_0_40px_rgba(255,255,255,0.15)] active:scale-95 pl-1"
-                >
-                  <Icon name={isPlaying ? "pause" : "play_arrow"} filled className="text-4xl md:text-6xl" />
-                </button>
-                
-                <button 
-                  onClick={() => skip(10)}
-                  className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-10 h-10 md:w-14 md:h-14 bg-black/30 backdrop-blur-md border border-white/10 hover:bg-white/10 transition-all transform hover:scale-105 active:scale-95"
-                >
-                  <Icon name="forward_10" className="text-xl md:text-3xl text-white/90" />
-                </button>
-
-                 {/* Placeholder for symmetry */}
-                 <div className="w-8 md:w-12"></div>
-              </div>
-
-              {/* Bottom Progress Bar */}
-              <div className="absolute inset-x-0 bottom-0 px-4 py-4 md:px-6 md:py-6 z-20 bg-gradient-to-t from-black/80 to-transparent">
-                <div className="flex items-center gap-2 md:gap-4">
-                  
-                  {/* Time & Loop In */}
-                  <div className="flex items-center gap-1 md:gap-2">
-                    <span className="text-[10px] md:text-xs font-mono font-medium text-white/80 w-8 md:w-10 text-right">{formatTime(currentTime)}</span>
-                    <button 
-                      onClick={setLoopIn}
-                      className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
-                      title="Set Loop Start"
-                    >
-                      <Icon name="keyboard_tab_rtl" className="text-xs md:text-sm" />
+          ) : (
+            <>
+              <div className="flex flex-col pt-4 px-4 pb-2 md:pt-8 md:px-8 md:pb-4 gap-4 md:gap-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex flex-col gap-2">
+                    <p className="tracking-tight text-xl md:text-3xl font-bold text-white truncate">{activeProject.name}</p>
+                    <div className="flex flex-wrap items-center gap-3 text-xs md:text-sm font-normal text-white/60">
+                      <span className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${
+                          activeProject.status === 'completed' ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.4)]' :
+                          activeProject.status === 'processing' ? 'bg-yellow-400 animate-pulse' : 'bg-red-400'
+                        }`}></span>
+                        {activeProject.status === 'completed' ? 'Analysis complete' :
+                         activeProject.status === 'processing' ? 'Processing...' : 'Error'}
+                      </span>
+                      <span className="hidden md:inline text-white/20">-</span>
+                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/5" title="Detected Tempo">
+                         <Icon name="metronome" className="text-sm text-primary" />
+                         <span className="text-white/90 font-mono font-medium">{bpm}</span>
+                         <span className="text-[10px] uppercase tracking-wider">BPM</span>
+                      </span>
+                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/5" title="Detected Time Signature">
+                         <Icon name="music_note" className="text-sm text-white/60" />
+                         <span className="text-white/90 font-mono font-medium">{timeSignature}/4</span>
+                         <span className="text-[10px] uppercase tracking-wider">Time</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 w-full md:w-auto">
+                    <button className="flex-1 md:flex-none justify-center flex items-center gap-2 rounded-lg bg-white/5 border border-white/10 px-3 py-2 md:px-4 text-sm font-semibold text-white transition-all hover:bg-white/10 hover:border-white/20 active:scale-95">
+                      <Icon name="content_copy" className="text-lg" /> 
+                      <span className="hidden sm:inline">Copy Chords</span>
+                      <span className="sm:hidden">Copy</span>
+                    </button>
+                    <button className="flex-1 md:flex-none justify-center flex items-center gap-2 rounded-lg bg-primary hover:bg-blue-600 px-3 py-2 md:px-4 text-sm font-semibold text-white transition-colors shadow-lg shadow-primary/20">
+                      <Icon name="download" className="text-lg" /> 
+                      <span className="hidden sm:inline">Export MIDI</span>
+                      <span className="sm:hidden">Export</span>
                     </button>
                   </div>
+                </div>
+              </div>
+
+              <div className="flex-1 flex flex-col px-4 pb-4 md:px-8 min-h-0">
+                <div className="flex-grow rounded-xl md:rounded-2xl bg-[#0b1117] border border-white/5 relative overflow-hidden group shadow-2xl">
                   
-                  {/* Slider Container */}
-                  <div className="relative flex-1 h-6 group/slider flex items-center">
-                    {/* Track Background */}
-                    <div className="absolute w-full h-1 md:h-1.5 bg-white/10 rounded-full overflow-hidden backdrop-blur-sm">
-                      {/* Buffered (fake) */}
-                      <div className="h-full bg-white/5 w-full origin-left scale-x-[0.8]" />
+                  <div className="absolute inset-0 z-0">
+                     <WaveformDisplay 
+                       data={waveformData} 
+                       isPlaying={isPlaying} 
+                       bpm={bpm}
+                       timeSignature={timeSignature}
+                       zoomLevel={zoomLevel}
+                       currentTime={currentTime}
+                     />
+                  </div>
+
+                  <div className="absolute inset-0 z-10 flex items-center justify-center gap-4 md:gap-8 pointer-events-none">
+                    
+                    <div className="absolute top-4 right-4 flex items-center bg-black/40 backdrop-blur-md rounded-lg border border-white/10 pointer-events-auto">
+                      <button 
+                        onClick={handleZoomOut}
+                        disabled={zoomLevel <= 1}
+                        className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-l-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        title="Zoom Out"
+                      >
+                        <Icon name="zoom_out" className="text-xl" />
+                      </button>
+                      <div className="w-px h-4 bg-white/10"></div>
+                      <button 
+                        onClick={handleZoomIn}
+                        disabled={zoomLevel >= 8}
+                        className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-r-lg disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        title="Zoom In"
+                      >
+                        <Icon name="zoom_in" className="text-xl" />
+                      </button>
                     </div>
 
-                    {/* Loop Region Indicator */}
-                    {isLooping && (
-                      <div 
-                        className="absolute h-1 md:h-1.5 bg-primary/30 rounded-full pointer-events-none z-10"
-                        style={{ 
-                          left: `${(loopStart / duration) * 100}%`, 
-                          width: `${((loopEnd - loopStart) / duration) * 100}%` 
-                        }}
-                      />
-                    )}
-                    
-                    {/* Active Progress */}
-                    <div 
-                      className="absolute h-1 md:h-1.5 bg-primary rounded-full pointer-events-none z-20" 
-                      style={{ width: `${(currentTime / duration) * 100}%` }}
-                    />
-                    
-                    {/* Input Range */}
-                    <input
-                      type="range"
-                      min="0"
-                      max={duration}
-                      step="0.1"
-                      value={currentTime}
-                      onChange={handleSeek}
-                      className="absolute w-full h-full opacity-0 cursor-pointer z-30"
-                    />
-                    
-                    {/* Thumb Knob */}
-                    <div 
-                      className="absolute h-3 w-3 md:h-4 md:w-4 bg-white rounded-full shadow-md pointer-events-none transform -translate-x-1/2 transition-transform group-hover/slider:scale-125 z-20"
-                      style={{ left: `${(currentTime / duration) * 100}%` }}
-                    />
-                    
-                    {/* Loop Loop Markers (Optional visuals for handle positions) */}
-                    {isLooping && (
-                        <>
-                          <div className="absolute w-0.5 h-2 md:h-3 bg-white/50 z-10 pointer-events-none" style={{ left: `${(loopStart / duration) * 100}%` }} />
-                          <div className="absolute w-0.5 h-2 md:h-3 bg-white/50 z-10 pointer-events-none" style={{ left: `${(loopEnd / duration) * 100}%` }} />
-                        </>
-                    )}
-                  </div>
-
-                  {/* Time & Loop Out */}
-                  <div className="flex items-center gap-1 md:gap-2">
                     <button 
-                      onClick={setLoopOut}
-                      className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
-                      title="Set Loop End"
+                      onClick={toggleLoop}
+                      className={`pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-8 h-8 md:w-12 md:h-12 border transition-all transform hover:scale-105 active:scale-95 ${isLooping ? 'bg-primary text-white border-primary shadow-[0_0_15px_rgba(19,127,236,0.5)]' : 'bg-black/30 backdrop-blur-md border-white/10 text-white/60 hover:bg-white/10 hover:text-white'}`}
+                      title="Toggle Loop"
                     >
-                      <Icon name="keyboard_tab" className="text-xs md:text-sm" />
+                      <Icon name="repeat" className="text-lg md:text-2xl" />
                     </button>
-                    <span className="text-[10px] md:text-xs font-mono font-medium text-white/50 w-8 md:w-10">{formatTime(duration)}</span>
+
+                    <button 
+                      onClick={() => skip(-10)}
+                      className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-10 h-10 md:w-14 md:h-14 bg-black/30 backdrop-blur-md border border-white/10 hover:bg-white/10 transition-all transform hover:scale-105 active:scale-95"
+                    >
+                      <Icon name="replay_10" className="text-xl md:text-3xl text-white/90" />
+                    </button>
+                    
+                    <button 
+                      onClick={() => audioPlayer.toggle()}
+                      disabled={duration === 0 || audioPlayer.isLoading}
+                      className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-16 h-16 md:w-24 md:h-24 bg-white text-background-dark hover:scale-105 transition-all shadow-[0_0_40px_rgba(255,255,255,0.15)] active:scale-95 pl-1 disabled:opacity-50 disabled:hover:scale-100"
+                    >
+                      {audioPlayer.isLoading ? (
+                        <div className="w-8 h-8 md:w-12 md:h-12 rounded-full border-4 border-gray-300 border-t-gray-600 animate-spin" />
+                      ) : (
+                        <Icon name={isPlaying ? "pause" : "play_arrow"} filled className="text-4xl md:text-6xl" />
+                      )}
+                    </button>
+                    
+                    <button 
+                      onClick={() => skip(10)}
+                      className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-10 h-10 md:w-14 md:h-14 bg-black/30 backdrop-blur-md border border-white/10 hover:bg-white/10 transition-all transform hover:scale-105 active:scale-95"
+                    >
+                      <Icon name="forward_10" className="text-xl md:text-3xl text-white/90" />
+                    </button>
+
+                     <div className="w-8 md:w-12"></div>
                   </div>
 
+                  <div className="absolute inset-x-0 bottom-0 px-4 py-4 md:px-6 md:py-6 z-20 bg-gradient-to-t from-black/80 to-transparent">
+                    <div className="flex items-center gap-2 md:gap-4">
+                      
+                      <div className="flex items-center gap-1 md:gap-2">
+                        <span className="text-[10px] md:text-xs font-mono font-medium text-white/80 w-8 md:w-10 text-right">{formatTime(currentTime)}</span>
+                        <button 
+                          onClick={setLoopIn}
+                          className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
+                          title="Set Loop Start"
+                        >
+                          <Icon name="keyboard_tab_rtl" className="text-xs md:text-sm" />
+                        </button>
+                      </div>
+                      
+                      <div className="relative flex-1 h-6 group/slider flex items-center">
+                        <div className="absolute w-full h-1 md:h-1.5 bg-white/10 rounded-full overflow-hidden backdrop-blur-sm">
+                          <div className="h-full bg-white/5 w-full origin-left scale-x-[0.8]" />
+                        </div>
+
+                        {isLooping && (
+                          <div 
+                            className="absolute h-1 md:h-1.5 bg-primary/30 rounded-full pointer-events-none z-10"
+                            style={{ 
+                              left: `${duration > 0 ? (loopStart / duration) * 100 : 0}%`, 
+                              width: `${duration > 0 ? ((loopEnd - loopStart) / duration) * 100 : 0}%` 
+                            }}
+                          />
+                        )}
+                        
+                        <div 
+                          className="absolute h-1 md:h-1.5 bg-primary rounded-full pointer-events-none z-20" 
+                          style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                        />
+                        
+                        <input
+                          type="range"
+                          min="0"
+                          max={duration || 1}
+                          step="0.1"
+                          value={currentTime}
+                          onChange={handleSeek}
+                          disabled={duration === 0}
+                          className="absolute w-full h-full opacity-0 cursor-pointer z-30 disabled:cursor-not-allowed"
+                        />
+                        
+                        <div 
+                          className="absolute h-3 w-3 md:h-4 md:w-4 bg-white rounded-full shadow-md pointer-events-none transform -translate-x-1/2 transition-transform group-hover/slider:scale-125 z-20"
+                          style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                        />
+                        
+                        {isLooping && duration > 0 && (
+                            <>
+                              <div className="absolute w-0.5 h-2 md:h-3 bg-white/50 z-10 pointer-events-none" style={{ left: `${(loopStart / duration) * 100}%` }} />
+                              <div className="absolute w-0.5 h-2 md:h-3 bg-white/50 z-10 pointer-events-none" style={{ left: `${(loopEnd / duration) * 100}%` }} />
+                            </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1 md:gap-2">
+                        <button 
+                          onClick={setLoopOut}
+                          className="p-1 hover:bg-white/10 rounded text-white/50 hover:text-white transition-colors"
+                          title="Set Loop End"
+                        >
+                          <Icon name="keyboard_tab" className="text-xs md:text-sm" />
+                        </button>
+                        <span className="text-[10px] md:text-xs font-mono font-medium text-white/50 w-8 md:w-10">{formatTime(duration)}</span>
+                      </div>
+
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
 
-          {/* Chord Strip */}
-          <div className="flex-shrink-0">
-            <ChordStrip 
-              chords={CHORDS} 
-              currentTime={currentTime} 
-              onChordClick={(time) => setCurrentTime(time)}
-              bpm={BPM}
-              timeSignature={TIME_SIGNATURE}
-            />
-          </div>
-
+              <div className="flex-shrink-0">
+                <ChordStrip 
+                  chords={chords} 
+                  currentTime={currentTime} 
+                  onChordClick={(time) => setCurrentTime(time)}
+                  bpm={bpm}
+                  timeSignature={timeSignature}
+                />
+              </div>
+            </>
+          )}
         </main>
       </div>
     </div>
