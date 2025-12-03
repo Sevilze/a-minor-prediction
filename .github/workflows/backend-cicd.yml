@@ -1,0 +1,165 @@
+name: Build and Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-cicd.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-cicd.yml"
+  workflow_dispatch:
+
+env:
+  REGION: asia-southeast2
+  IMAGE_NAME: asia-southeast2-docker.pkg.dev/${{ secrets.PROJECT_ID }}/${{ secrets.REPOSITORY }}/chordai-backend
+  MODELS_IMAGE_NAME: ${{ secrets.DOCKER_REPOSITORY }}
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest pytest-asyncio
+
+      - name: Lint with Ruff
+        run: ruff check app/
+
+      - name: Type check (optional)
+        run: |
+          pip install mypy
+          mypy app/ --ignore-missing-imports || true
+
+  build-and-deploy:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: 1
+    permissions:
+      contents: "read"
+      id-token: "write"
+      actions: "write"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/${{ secrets.PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ secrets.WORKLOAD_IDENTITY_POOL }}/providers/github-provider"
+          service_account: ${{ secrets.SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK and Docker
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker to use gcloud as a credential helper
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev
+
+      - name: Log in to Docker Hub
+        if: env.MODELS_IMAGE_NAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pull model container from Docker Hub
+        if: env.MODELS_IMAGE_NAME != ''
+        run: |
+          docker pull ${{ env.MODELS_IMAGE_NAME }}:latest
+          docker tag ${{ env.MODELS_IMAGE_NAME }}:latest models:latest
+
+      - name: Copy model files from container
+        if: env.MODELS_IMAGE_NAME != ''
+        run: |
+          mkdir -p backend/model
+          docker create --name temp-models models:latest
+          docker cp temp-models:/models/best_model.pt backend/model/best_model.pt || echo "Model file not found in container"
+          docker cp temp-models:/models/vocab.json backend/model/vocab.json || echo "Vocab file not found in container"
+          docker rm temp-models
+
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          build-args: |
+            MODEL_CHECKPOINT_PATH=/app/model/best_model.pt
+            VOCAB_PATH=/app/model/vocab.json
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Deploy to Cloud Run
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          gcloud run deploy ${{ secrets.SERVICE }} \
+            --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --platform managed \
+            --region $REGION \
+            --allow-unauthenticated \
+            --set-env-vars="WORKERS=2" \
+            --set-env-vars="LOG_LEVEL=info" \
+            --set-env-vars="DEBUG=false" \
+            --set-env-vars="MODEL_CHECKPOINT_PATH=/app/model/best_model.pt" \
+            --set-env-vars="VOCAB_PATH=/app/model/vocab.json" \
+            --set-env-vars="AWS_REGION=${{ secrets.AWS_REGION }}" \
+            --set-env-vars="AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            --set-env-vars="AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            --set-env-vars="S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \
+            --set-env-vars="DYNAMODB_USERS_TABLE=${{ secrets.DYNAMODB_USERS_TABLE }}" \
+            --set-env-vars="DYNAMODB_PROJECTS_TABLE=${{ secrets.DYNAMODB_PROJECTS_TABLE }}" \
+            --set-env-vars="DYNAMODB_CHORDS_TABLE=${{ secrets.DYNAMODB_CHORDS_TABLE }}" \
+            --set-env-vars="DYNAMODB_WAVEFORM_TABLE=${{ secrets.DYNAMODB_WAVEFORM_TABLE }}" \
+            --set-env-vars="COGNITO_USER_POOL_ID=${{ secrets.COGNITO_USER_POOL_ID }}" \
+            --set-env-vars="COGNITO_CLIENT_ID=${{ secrets.COGNITO_CLIENT_ID }}" \
+            --set-env-vars="COGNITO_CLIENT_SECRET=${{ secrets.COGNITO_CLIENT_SECRET }}" \
+            --set-env-vars="COGNITO_DOMAIN=${{ secrets.COGNITO_DOMAIN }}" \
+            --set-env-vars="COGNITO_REDIRECT_URI=${{ secrets.COGNITO_REDIRECT_URI }}" \
+            --set-env-vars="JWT_SECRET=${{ secrets.JWT_SECRET }}" \
+            --set-env-vars="FRONTEND_URL=${{ secrets.FRONTEND_URL }}" \
+            --set-env-vars="BASE_URL=${{ secrets.BASE_URL }}" \
+            --set-env-vars="CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}" \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 600 \
+            --max-instances 10 \
+            --min-instances 0 \
+            --port 8080 \
+            --use-http2 \
+            --no-cpu-throttling \
+            --execution-environment gen2 \
+            --cpu-boost
+
+      - name: Show deployment URL
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          echo "Deployment completed."
+          gcloud run services describe ${{ secrets.SERVICE }} --region $REGION --format 'value(status.url)'
