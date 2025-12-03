@@ -98,7 +98,7 @@ jobs:
         if: env.MODELS_IMAGE_NAME != ''
         run: |
           mkdir -p backend/model
-          docker create --name temp-models models:latest
+          docker create --name temp-models models:latest /bin/true
           docker cp temp-models:/models/best_model.pt backend/model/best_model.pt || echo "Model file not found in container"
           docker cp temp-models:/models/vocab.json backend/model/vocab.json || echo "Vocab file not found in container"
           docker rm temp-models
