@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from .jwt_service import JWTService, JWTError
+from .jwt_service import JWTError, JWTService
 
 logger = logging.getLogger(__name__)
 

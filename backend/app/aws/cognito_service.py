@@ -1,7 +1,8 @@
-import httpx
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlencode
+
+import httpx
 
 
 class CognitoError(Exception):

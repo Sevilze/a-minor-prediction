@@ -1,8 +1,9 @@
-from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
 from functools import lru_cache
-from typing import List, Optional
+from pathlib import Path
+from typing import Optional
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -31,8 +32,8 @@ class Settings(BaseSettings):
 
     frontend_url: str
     base_url: str
+    cors_origins: str
 
-    upload_dir: Path = Path("./uploads")
     max_upload_size: int = 100 * 1024 * 1024
     allowed_extensions: set = {"mp3", "wav", "flac", "aiff", "ogg", "m4a"}
 
@@ -45,24 +46,15 @@ class Settings(BaseSettings):
     n_fft: int = 2048
     segment_duration: float = 0.5
 
-    cors_origins: List[str] = ["*"]
-
     ssl_certfile: Optional[str] = None
     ssl_keyfile: Optional[str] = None
 
-    @field_validator("model_checkpoint_path", "vocab_path", "upload_dir", mode="before")
+    @field_validator("model_checkpoint_path", "vocab_path", mode="before")
     @classmethod
     def parse_path(cls, v):
         if isinstance(v, str):
             return Path(v)
-        return v
-
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v):
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+        return
 
     @property
     def cognito_configured(self) -> bool:

@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Any
-from uuid import UUID
 from decimal import Decimal
+from typing import Any, Optional
+from uuid import UUID
 
 
 @dataclass

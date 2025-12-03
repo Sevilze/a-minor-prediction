@@ -5,14 +5,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from .config import get_settings
-from .aws.s3_service import S3Service
-from .aws.dynamodb_repository import DynamoDbRepository
 from .aws.cognito_service import CognitoService
+from .aws.dynamodb_repository import DynamoDbRepository
 from .aws.jwt_service import JWTService
+from .aws.s3_service import S3Service
+from .config import get_settings
+from .preprocessing.predictor import load_model
 from .routers.audio import router as audio_router
 from .routers.auth import router as auth_router
-from .preprocessing.predictor import load_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,8 +53,6 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Cognito not configured. Set COGNITO_* environment variables to enable OAuth."
         )
-
-    settings.upload_dir.mkdir(parents=True, exist_ok=True)
 
     load_model()
     logger.info("ML model loaded")

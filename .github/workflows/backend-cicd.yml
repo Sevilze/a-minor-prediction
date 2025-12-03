@@ -17,7 +17,7 @@ on:
 
 env:
   REGION: asia-southeast2
-  IMAGE_NAME: asia-southeast2-docker.pkg.dev/${{ secrets.PROJECT_ID }}/${{ secrets.REPOSITORY }}/chordai-backend
+  IMAGE_NAME: asia-southeast2-docker.pkg.dev/${{ secrets.PROJECT_ID }}/${{ secrets.REPOSITORY }}/chordbackend
   MODELS_IMAGE_NAME: ${{ secrets.DOCKER_REPOSITORY }}
 
 jobs:

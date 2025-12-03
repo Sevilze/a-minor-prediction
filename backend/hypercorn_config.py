@@ -1,26 +1,33 @@
 import os
+
 from hypercorn.config import Config
+
+
+def is_cloud_run() -> bool:
+    return os.environ.get("K_SERVICE") is not None
 
 
 def create_hypercorn_config() -> Config:
     config = Config()
 
-    config.bind = [os.environ.get("BIND", "0.0.0.0:8000")]
+    port = os.environ.get("PORT", "8000")
+    config.bind = [f"0.0.0.0:{port}"]
 
-    config.alpn_protocols = ["h2", "http/1.1"]
-
-    ssl_certfile = os.environ.get("SSL_CERTFILE")
-    ssl_keyfile = os.environ.get("SSL_KEYFILE")
-
-    if (
-        ssl_certfile
-        and ssl_keyfile
-        and os.path.exists(ssl_certfile)
-        and os.path.exists(ssl_keyfile)
-    ):
-        config.certfile = ssl_certfile
-        config.keyfile = ssl_keyfile
-        config.insecure_bind = []
+    if is_cloud_run():
+        config.alpn_protocols = ["h2c", "http/1.1"]
+    else:
+        config.alpn_protocols = ["h2", "http/1.1"]
+        ssl_certfile = os.environ.get("SSL_CERTFILE")
+        ssl_keyfile = os.environ.get("SSL_KEYFILE")
+        if (
+            ssl_certfile
+            and ssl_keyfile
+            and os.path.exists(ssl_certfile)
+            and os.path.exists(ssl_keyfile)
+        ):
+            config.certfile = ssl_certfile
+            config.keyfile = ssl_keyfile
+            config.insecure_bind = []
 
     config.workers = int(os.environ.get("WORKERS", 1))
 

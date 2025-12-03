@@ -1,7 +1,8 @@
-import jwt
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
+
+import jwt
 
 from .models import AuthUser, JWTClaims
 

@@ -7,15 +7,19 @@ from hypercorn.asyncio import serve
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from hypercorn_config import create_hypercorn_config
 from app.main import app
+from hypercorn_config import create_hypercorn_config, is_cloud_run
 
 
 async def main():
     config = create_hypercorn_config()
     print("Starting ChordAI API with HTTP/2 support")
     print(f"Binding to: {config.bind}")
-    if config.certfile:
+
+    if is_cloud_run():
+        print("Running on Google Cloud Run")
+        print("HTTP/2 (h2c) enabled - TLS handled by Cloud Run")
+    elif config.certfile:
         print(f"TLS enabled with certificate: {config.certfile}")
         print("HTTP/2 (h2) protocol available over HTTPS")
     else:

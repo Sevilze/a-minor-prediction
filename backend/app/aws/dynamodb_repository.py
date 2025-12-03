@@ -1,14 +1,14 @@
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
-from decimal import Decimal
 
 import aioboto3
 from botocore.exceptions import ClientError
 
 from .models import (
-    User,
     AudioProjectEntry,
     ChordPredictionEntry,
+    User,
     WaveformDataEntry,
 )
 
