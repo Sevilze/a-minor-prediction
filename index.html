@@ -7,7 +7,7 @@
     <link href="https://fonts.googleapis.com" rel="preconnect" />
     <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&display=swap"
       rel="stylesheet"
     />
     <link
@@ -27,7 +27,7 @@
               "surface-dark": "#1a2632",
             },
             fontFamily: {
-              display: ["Space Grotesk", "sans-serif"],
+              sans: ["Inter", "system-ui", "sans-serif"],
             },
           },
         },
@@ -40,7 +40,6 @@
       .material-symbols-outlined.fill {
         font-variation-settings: "FILL" 1;
       }
-      /* Custom Scrollbar for the chord strip */
       .hide-scrollbar::-webkit-scrollbar {
         display: none;
       }
@@ -49,20 +48,10 @@
         scrollbar-width: none;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "recharts": "https://aistudiocdn.com/recharts@^3.4.1"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
-  <body class="font-display bg-background-light dark:bg-background-dark text-[#E0E0E0] overflow-hidden h-screen w-screen">
+    <link rel="stylesheet" href="/src/index.css">
+  </head>
+  <body class="font-sans bg-background-light dark:bg-background-dark text-[#E0E0E0] overflow-hidden h-screen w-screen">
     <div id="root" class="h-full w-full"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
 </html>

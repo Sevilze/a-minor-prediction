@@ -20,10 +20,13 @@
     "jsx": "react-jsx",
     "paths": {
       "@/*": [
-        "./*"
+        "./src/*"
       ]
     },
     "allowImportingTsExtensions": true,
-    "noEmit": true
-  }
+    "noEmit": true,
+    "baseUrl": ".",
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "vite.config.ts", "vite-env.d.ts"]
 }

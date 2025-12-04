@@ -1,11 +1,14 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import api from "../services/api";
+import { generateWaveformFromAudio } from "../utils/waveform";
+import { WaveformPoint } from "../types";
 
 interface UseAudioPlayerProps {
-  projectId: string | null;
+  trackId: string | null;
   onTimeUpdate?: (currentTime: number) => void;
   onEnded?: () => void;
   onError?: (error: string) => void;
+  onWaveformGenerated?: (waveform: WaveformPoint[]) => void;
 }
 
 interface UseAudioPlayerReturn {
@@ -14,6 +17,7 @@ interface UseAudioPlayerReturn {
   duration: number;
   isLoading: boolean;
   error: string | null;
+  waveformData: WaveformPoint[];
   play: () => Promise<void>;
   pause: () => void;
   toggle: () => Promise<void>;
@@ -22,20 +26,45 @@ interface UseAudioPlayerReturn {
 }
 
 export function useAudioPlayer({
-  projectId,
+  trackId,
   onTimeUpdate,
   onEnded,
   onError,
+  onWaveformGenerated,
 }: UseAudioPlayerProps): UseAudioPlayerReturn {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [waveformData, setWaveformData] = useState<WaveformPoint[]>([]);
   const urlExpiryRef = useRef<number>(0);
-  const currentProjectIdRef = useRef<string | null>(null);
+  const currentTrackIdRef = useRef<string | null>(null);
+
+  const updateTime = useCallback(() => {
+    if (audioRef.current && isPlaying) {
+      const time = audioRef.current.currentTime;
+      setCurrentTime(time);
+      onTimeUpdate?.(time);
+      animationFrameRef.current = requestAnimationFrame(updateTime);
+    }
+  }, [isPlaying, onTimeUpdate]);
+
+  useEffect(() => {
+    if (isPlaying) {
+      animationFrameRef.current = requestAnimationFrame(updateTime);
+    } else if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isPlaying, updateTime]);
 
   const loadAudioUrl = useCallback(
     async (id: string) => {
@@ -61,40 +90,35 @@ export function useAudioPlayer({
   );
 
   useEffect(() => {
-    if (projectId !== currentProjectIdRef.current) {
-      currentProjectIdRef.current = projectId;
+    if (trackId !== currentTrackIdRef.current) {
+      currentTrackIdRef.current = trackId;
       setAudioUrl(null);
       setCurrentTime(0);
       setDuration(0);
       setIsPlaying(false);
       setError(null);
+      setWaveformData([]);
 
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = "";
       }
     }
-  }, [projectId]);
+  }, [trackId]);
 
   const ensureAudioLoaded = useCallback(async (): Promise<boolean> => {
-    if (!projectId) return false;
+    if (!trackId) return false;
 
     const needsNewUrl = !audioUrl || Date.now() > urlExpiryRef.current;
 
     if (needsNewUrl) {
-      const url = await loadAudioUrl(projectId);
+      const url = await loadAudioUrl(trackId);
       if (!url) return false;
       setAudioUrl(url);
 
       if (!audioRef.current) {
         audioRef.current = new Audio();
         audioRef.current.preload = "auto";
-
-        audioRef.current.addEventListener("timeupdate", () => {
-          const time = audioRef.current?.currentTime ?? 0;
-          setCurrentTime(time);
-          onTimeUpdate?.(time);
-        });
 
         audioRef.current.addEventListener("loadedmetadata", () => {
           setDuration(audioRef.current?.duration ?? 0);
@@ -115,10 +139,18 @@ export function useAudioPlayer({
 
       audioRef.current.src = url;
       await audioRef.current.load();
+
+      try {
+        const waveform = await generateWaveformFromAudio(url);
+        setWaveformData(waveform);
+        onWaveformGenerated?.(waveform);
+      } catch (err) {
+        console.warn("Failed to generate waveform from audio:", err);
+      }
     }
 
     return true;
-  }, [projectId, audioUrl, loadAudioUrl, onTimeUpdate, onEnded, onError]);
+  }, [trackId, audioUrl, loadAudioUrl, onEnded, onError, onWaveformGenerated]);
 
   const play = useCallback(async () => {
     const loaded = await ensureAudioLoaded();
@@ -169,6 +201,9 @@ export function useAudioPlayer({
         audioRef.current.src = "";
         audioRef.current = null;
       }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
   }, []);
 
@@ -178,6 +213,7 @@ export function useAudioPlayer({
     duration,
     isLoading,
     error,
+    waveformData,
     play,
     pause,
     toggle,
