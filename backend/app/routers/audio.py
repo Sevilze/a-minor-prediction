@@ -24,6 +24,7 @@ from ..schemas import (
     ChordPredictionSchema,
     CreatePlaylistRequest,
     HealthResponse,
+    MoveTrackRequest,
     PlaylistBase,
     PlaylistListItem,
     PlaylistListResponse,
@@ -128,7 +129,9 @@ async def upload_audio(
         await db_repo.update_track(track)
 
         predictor = get_predictor()
-        chord_predictions = predictor.predict_audio(audio, hop_duration=2.0)
+        seconds_per_beat = 60 / bpm
+        seconds_per_bar = seconds_per_beat * track.time_signature
+        chord_predictions = predictor.predict_audio(audio, hop_duration=seconds_per_bar)
 
         chord_list = [
             ChordPrediction(
@@ -143,6 +146,14 @@ async def upload_audio(
             chords=chord_list,
         )
         await db_repo.create_predictions(chord_entry)
+
+        if playlist_id:
+            playlist = await db_repo.get_playlist_by_id(playlist_id)
+            if playlist and playlist.user_id == str(user_id):
+                if track_id not in playlist.track_ids:
+                    playlist.track_ids.append(track_id)
+                    playlist.updated_at = datetime.utcnow().isoformat()
+                    await db_repo.update_playlist(playlist)
 
         return UploadResponse(
             success=True,
@@ -473,6 +484,76 @@ async def delete_track(
     except S3ServiceError as e:
         logger.error(f"S3 delete error: {e}")
         raise HTTPException(status_code=500, detail="Storage error")
+    except RepositoryError as e:
+        logger.error(f"Database error: {e}")
+        raise HTTPException(status_code=500, detail="Database error")
+
+
+@router.post("/tracks/{track_id}/move", response_model=TrackResponse)
+async def move_track_to_playlist(
+    track_id: str,
+    request_body: MoveTrackRequest,
+    user_id: AuthenticatedUser,
+    db_repo: DynamoDbRepository = Depends(get_db_repo),
+):
+    try:
+        track = await db_repo.get_track_by_id(track_id)
+        if not track:
+            raise HTTPException(status_code=404, detail="Track not found")
+        if track.user_id != str(user_id):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        target_playlist = await db_repo.get_playlist_by_id(request_body.playlist_id)
+        if not target_playlist:
+            raise HTTPException(status_code=404, detail="Target playlist not found")
+        if target_playlist.user_id != str(user_id):
+            raise HTTPException(
+                status_code=403, detail="Access denied to target playlist"
+            )
+
+        old_playlist_id = getattr(track, "playlist_id", None)
+        if old_playlist_id:
+            old_playlist = await db_repo.get_playlist_by_id(old_playlist_id)
+            if old_playlist and track_id in old_playlist.track_ids:
+                old_playlist.track_ids.remove(track_id)
+                old_playlist.updated_at = datetime.utcnow().isoformat()
+                await db_repo.update_playlist(old_playlist)
+
+        track.playlist_id = request_body.playlist_id
+        await db_repo.update_track(track)
+
+        if track_id not in target_playlist.track_ids:
+            target_playlist.track_ids.append(track_id)
+            target_playlist.updated_at = datetime.utcnow().isoformat()
+            await db_repo.update_playlist(target_playlist)
+
+        chord_entry = await db_repo.get_track_predictions(track_id)
+        chords = chord_entry.chords if chord_entry else []
+
+        return TrackResponse(
+            success=True,
+            track=TrackBase(
+                id=track.id,
+                name=track.name,
+                duration=track.duration_formatted,
+                duration_seconds=track.duration,
+                size=track.file_size_formatted,
+                status=track.status,
+                type=track.file_type,
+                bpm=track.bpm,
+                time_signature=track.time_signature,
+                playlist_id=track.playlist_id,
+            ),
+            chords=[
+                ChordPredictionSchema(
+                    timestamp=c.timestamp,
+                    formatted_time=c.formatted_time,
+                    chord=c.chord,
+                    confidence=c.confidence,
+                )
+                for c in chords
+            ],
+        )
     except RepositoryError as e:
         logger.error(f"Database error: {e}")
         raise HTTPException(status_code=500, detail="Database error")

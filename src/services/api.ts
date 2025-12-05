@@ -123,22 +123,34 @@ export const api = {
   },
 
   async getTrack(trackId: string): Promise<TrackResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/track/${trackId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/tracks/${trackId}`, {
       headers: getAuthHeaders(),
     });
     return handleResponse<TrackResponse>(response);
   },
 
   async deleteTrack(trackId: string): Promise<{ success: boolean }> {
-    const response = await fetch(`${API_BASE_URL}/api/track/${trackId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/tracks/${trackId}`, {
       method: "DELETE",
       headers: getAuthHeaders(),
     });
     return handleResponse<{ success: boolean }>(response);
   },
 
+  async moveTrackToPlaylist(trackId: string, playlistId: string): Promise<TrackResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/tracks/${trackId}/move`, {
+      method: "POST",
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ playlist_id: playlistId }),
+    });
+    return handleResponse<TrackResponse>(response);
+  },
+
   async createPlaylist(name: string): Promise<PlaylistResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/playlist`, {
+    const response = await fetch(`${API_BASE_URL}/api/playlists`, {
       method: "POST",
       headers: {
         ...getAuthHeaders(),
@@ -150,14 +162,14 @@ export const api = {
   },
 
   async getPlaylist(playlistId: string): Promise<PlaylistResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/playlist/${playlistId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}`, {
       headers: getAuthHeaders(),
     });
     return handleResponse<PlaylistResponse>(response);
   },
 
   async updatePlaylist(playlistId: string, name: string): Promise<PlaylistResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/playlist/${playlistId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}`, {
       method: "PUT",
       headers: {
         ...getAuthHeaders(),
@@ -169,7 +181,7 @@ export const api = {
   },
 
   async deletePlaylist(playlistId: string): Promise<{ success: boolean }> {
-    const response = await fetch(`${API_BASE_URL}/api/playlist/${playlistId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/playlists/${playlistId}`, {
       method: "DELETE",
       headers: getAuthHeaders(),
     });

@@ -77,6 +77,10 @@ class UpdatePlaylistRequest(BaseModel):
     track_ids: Optional[List[str]] = None
 
 
+class MoveTrackRequest(BaseModel):
+    playlist_id: str
+
+
 class UploadResponse(BaseModel):
     success: bool
     track: TrackBase
