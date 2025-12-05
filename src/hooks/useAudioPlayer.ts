@@ -80,10 +80,9 @@ export function useAudioPlayer({
         const message =
           err instanceof Error ? err.message : "Failed to load audio";
         setError(message);
+        setIsLoading(false);
         onError?.(message);
         return null;
-      } finally {
-        setIsLoading(false);
       }
     },
     [onError]
@@ -91,6 +90,7 @@ export function useAudioPlayer({
 
   useEffect(() => {
     if (trackId !== currentTrackIdRef.current) {
+      const previousTrackId = currentTrackIdRef.current;
       currentTrackIdRef.current = trackId;
       setAudioUrl(null);
       setCurrentTime(0);
@@ -101,19 +101,35 @@ export function useAudioPlayer({
 
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current.src = "";
+        audioRef.current.removeAttribute('src');
+        audioRef.current.load();
+      }
+      
+      if (previousTrackId && !trackId) {
+        if (audioRef.current) {
+          audioRef.current = null;
+        }
       }
     }
   }, [trackId]);
 
   const ensureAudioLoaded = useCallback(async (): Promise<boolean> => {
     if (!trackId) return false;
+    
+    if (trackId !== currentTrackIdRef.current) {
+      return false;
+    }
 
     const needsNewUrl = !audioUrl || Date.now() > urlExpiryRef.current;
 
     if (needsNewUrl) {
       const url = await loadAudioUrl(trackId);
       if (!url) return false;
+      
+      if (trackId !== currentTrackIdRef.current) {
+        return false;
+      }
+      
       setAudioUrl(url);
 
       if (!audioRef.current) {
@@ -129,11 +145,14 @@ export function useAudioPlayer({
           onEnded?.();
         });
 
-        audioRef.current.addEventListener("error", () => {
-          const errorMsg = "Failed to play audio";
-          setError(errorMsg);
-          setIsPlaying(false);
-          onError?.(errorMsg);
+        audioRef.current.addEventListener("error", (e) => {
+          const audio = e.target as HTMLAudioElement;
+          if (audio.src && audio.error?.code !== MediaError.MEDIA_ERR_ABORTED) {
+            const errorMsg = "Failed to play audio";
+            setError(errorMsg);
+            setIsPlaying(false);
+            onError?.(errorMsg);
+          }
         });
       }
 
@@ -154,12 +173,17 @@ export function useAudioPlayer({
 
   const play = useCallback(async () => {
     const loaded = await ensureAudioLoaded();
-    if (!loaded || !audioRef.current) return;
+    if (!loaded || !audioRef.current) {
+      setIsLoading(false);
+      return;
+    }
 
     try {
       await audioRef.current.play();
+      setIsLoading(false);
       setIsPlaying(true);
     } catch (err) {
+      setIsLoading(false);
       const message = err instanceof Error ? err.message : "Playback failed";
       setError(message);
       onError?.(message);

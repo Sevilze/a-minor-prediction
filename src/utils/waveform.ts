@@ -44,24 +44,3 @@ export async function generateWaveformFromAudio(
     await audioContext.close();
   }
 }
-
-export function generatePlaceholderWaveform(points: number = 150): WaveformPoint[] {
-  const data: WaveformPoint[] = [];
-  let prev = 50;
-  
-  for (let i = 0; i < points; i++) {
-    const change = (Math.random() - 0.5) * 30;
-    let val = prev + change;
-    if (val < 10) val = 10 + Math.random() * 10;
-    if (val > 90) val = 90 - Math.random() * 10;
-    const periodic = Math.sin(i / 5) * 20;
-    
-    data.push({
-      time: i,
-      amplitude: Math.max(5, Math.min(100, val + periodic)),
-    });
-    prev = val;
-  }
-  
-  return data;
-}

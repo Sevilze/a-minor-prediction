@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useCallback } from 'react';
 import { WaveformPoint } from '../../types';
 
 interface WaveformDisplayProps {
@@ -9,6 +9,7 @@ interface WaveformDisplayProps {
   zoomLevel: number;
   currentTime: number;
   duration: number;
+  onSeek?: (time: number) => void;
 }
 
 export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
@@ -19,10 +20,12 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
   zoomLevel,
   currentTime,
   duration,
+  onSeek,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number | null>(null);
+  const isDraggingRef = useRef(false);
 
   const visibleRange = useMemo(() => {
     if (zoomLevel <= 1 || duration === 0) {
@@ -44,6 +47,44 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
 
     return { start, end };
   }, [zoomLevel, currentTime, duration, data.length]);
+
+  const calculateTimeFromPosition = useCallback((clientX: number) => {
+    if (!containerRef.current || duration === 0) return 0;
+    
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, x / rect.width));
+    
+    const { start, end } = visibleRange;
+    const timeRange = end - start;
+    return start + percentage * timeRange;
+  }, [duration, visibleRange]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!onSeek || duration === 0) return;
+    isDraggingRef.current = true;
+    const time = calculateTimeFromPosition(e.clientX);
+    onSeek(time);
+  }, [onSeek, duration, calculateTimeFromPosition]);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDraggingRef.current || !onSeek) return;
+    const time = calculateTimeFromPosition(e.clientX);
+    onSeek(time);
+  }, [onSeek, calculateTimeFromPosition]);
+
+  const handleMouseUp = useCallback(() => {
+    isDraggingRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [handleMouseMove, handleMouseUp]);
 
   const beatMarkers = useMemo(() => {
     if (bpm <= 0) return [];
@@ -221,8 +262,37 @@ export const WaveformDisplay: React.FC<WaveformDisplayProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  if (data.length === 0) {
+    return (
+      <div 
+        ref={containerRef} 
+        className="w-full h-full relative flex items-center justify-center"
+      >
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex items-end gap-1 h-24">
+            {Array.from({ length: 40 }).map((_, i) => (
+              <div
+                key={i}
+                className="w-1 bg-white/10 rounded-full animate-pulse"
+                style={{
+                  height: `${20 + Math.sin(i * 0.3) * 15 + Math.random() * 10}%`,
+                  animationDelay: `${i * 50}ms`,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="absolute inset-0 bg-gradient-to-r from-background-dark/60 via-transparent to-background-dark/60 pointer-events-none" />
+      </div>
+    );
+  }
+
   return (
-    <div ref={containerRef} className="w-full h-full relative">
+    <div 
+      ref={containerRef} 
+      className={`w-full h-full relative ${onSeek && duration > 0 ? 'cursor-pointer' : ''}`}
+      onMouseDown={handleMouseDown}
+    >
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"

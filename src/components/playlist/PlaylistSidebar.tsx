@@ -22,6 +22,7 @@ interface PlaylistSidebarProps {
     name: string;
     tracks: TrackItem[];
   } | null;
+  looseTrack: TrackItem | null;
   activeTrackId: string | null;
   onPlaylistSelect: (id: string) => void;
   onPlaylistDelete: (id: string) => void;
@@ -29,6 +30,7 @@ interface PlaylistSidebarProps {
   onPlaylistCreate: (name: string) => void;
   onTrackSelect: (id: string) => void;
   onTrackDelete: (id: string) => void;
+  onMoveTrackToPlaylist: (trackId: string, playlistId: string) => void;
   onFileUpload: (file: File) => void;
   isUploading: boolean;
   uploadProgress?: number;
@@ -42,6 +44,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
   playlists,
   activePlaylistId,
   activePlaylist,
+  looseTrack,
   activeTrackId,
   onPlaylistSelect,
   onPlaylistDelete,
@@ -49,6 +52,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
   onPlaylistCreate,
   onTrackSelect,
   onTrackDelete,
+  onMoveTrackToPlaylist,
   onFileUpload,
   isUploading,
   uploadProgress,
@@ -208,10 +212,10 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         </div>
       )}
 
-      <div className="flex flex-col gap-1 flex-1 overflow-y-auto px-4 pb-4">
+      <div className="flex flex-col gap-1 flex-1 overflow-hidden px-4 pb-4">
         <button
           onClick={() => setShowPlaylists(!showPlaylists)}
-          className="flex items-center gap-2 py-2 text-white/60 hover:text-white transition-colors"
+          className="flex items-center gap-2 py-2 text-white/60 hover:text-white transition-colors flex-shrink-0"
         >
           <Icon
             name={showPlaylists ? 'expand_more' : 'chevron_right'}
@@ -223,7 +227,7 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         </button>
 
         {showPlaylists && (
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 flex-1 min-h-0 overflow-y-auto">
             {playlists.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <Icon name="queue_music" className="text-4xl text-white/20 mb-2" />
@@ -328,18 +332,76 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
         )}
 
         {activePlaylist && activePlaylist.tracks.length > 0 && (
-          <>
-            <div className="mt-4 mb-2">
+          <div className="flex flex-col flex-1 min-h-0 mt-2">
+            <div className="mb-2 flex-shrink-0">
               <span className="text-xs uppercase tracking-wider font-medium text-white/40 font-sans">
                 Tracks in "{activePlaylist.name}"
               </span>
             </div>
-            {activePlaylist.tracks.map((track) => (
+            <div className="flex flex-col gap-1 overflow-y-auto flex-1">
+              {activePlaylist.tracks.map((track) => (
+                <div
+                  key={track.id}
+                  onClick={() => onTrackSelect(track.id)}
+                  className={`flex cursor-pointer items-center justify-between gap-3 px-3 py-2 rounded-lg transition-colors group ${
+                    activeTrackId === track.id
+                      ? 'bg-primary/15 border border-primary/20'
+                      : 'bg-white/[0.02] hover:bg-white/5 border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    <Icon
+                      name="music_note"
+                      filled={activeTrackId === track.id}
+                      className={`text-lg ${
+                        activeTrackId === track.id ? 'text-primary' : 'text-white/50'
+                      }`}
+                    />
+                    <div className="flex flex-col overflow-hidden">
+                      <p className="text-white text-sm truncate font-sans">{track.name}</p>
+                      <p className="text-xs text-white/40 font-sans">{track.duration}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {track.status === 'completed' && (
+                      <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                    )}
+                    {track.status === 'processing' && (
+                      <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+                    )}
+                    {track.status === 'error' && (
+                      <div className="w-2 h-2 rounded-full bg-red-500" />
+                    )}
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTrackDelete(track.id);
+                      }}
+                      className="text-white/20 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Icon name="close" className="text-lg" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {looseTrack && (
+          <div className="flex flex-col flex-1 min-h-0 mt-2">
+            <div className="mb-2 flex-shrink-0">
+              <span className="text-xs uppercase tracking-wider font-medium text-yellow-400/80 font-sans">
+                Unsaved Track
+              </span>
+            </div>
+            <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3 mb-2">
               <div
-                key={track.id}
-                onClick={() => onTrackSelect(track.id)}
+                onClick={() => onTrackSelect(looseTrack.id)}
                 className={`flex cursor-pointer items-center justify-between gap-3 px-3 py-2 rounded-lg transition-colors group ${
-                  activeTrackId === track.id
+                  activeTrackId === looseTrack.id
                     ? 'bg-primary/15 border border-primary/20'
                     : 'bg-white/[0.02] hover:bg-white/5 border border-transparent'
                 }`}
@@ -347,45 +409,67 @@ export const PlaylistSidebar: React.FC<PlaylistSidebarProps> = ({
                 <div className="flex items-center gap-3 overflow-hidden">
                   <Icon
                     name="music_note"
-                    filled={activeTrackId === track.id}
+                    filled={activeTrackId === looseTrack.id}
                     className={`text-lg ${
-                      activeTrackId === track.id ? 'text-primary' : 'text-white/50'
+                      activeTrackId === looseTrack.id ? 'text-primary' : 'text-white/50'
                     }`}
                   />
                   <div className="flex flex-col overflow-hidden">
-                    <p className="text-white text-sm truncate font-sans">{track.name}</p>
-                    <p className="text-xs text-white/40 font-sans">{track.duration}</p>
+                    <p className="text-white text-sm truncate font-sans">{looseTrack.name}</p>
+                    <p className="text-xs text-white/40 font-sans">{looseTrack.duration}</p>
                   </div>
                 </div>
-
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  {track.status === 'completed' && (
+                  {looseTrack.status === 'completed' && (
                     <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
                   )}
-                  {track.status === 'processing' && (
+                  {looseTrack.status === 'processing' && (
                     <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
                   )}
-                  {track.status === 'error' && (
+                  {looseTrack.status === 'error' && (
                     <div className="w-2 h-2 rounded-full bg-red-500" />
                   )}
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onTrackDelete(track.id);
-                    }}
-                    className="text-white/20 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <Icon name="close" className="text-lg" />
-                  </button>
                 </div>
               </div>
-            ))}
-          </>
+              
+              {playlists.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-yellow-500/10">
+                  <p className="text-xs text-yellow-400/70 mb-2 font-sans">Move to playlist:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {playlists.map((playlist) => (
+                      <button
+                        key={playlist.id}
+                        onClick={() => onMoveTrackToPlaylist(looseTrack.id, playlist.id)}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/5 hover:bg-primary/20 border border-white/10 hover:border-primary/30 text-xs text-white/70 hover:text-white transition-colors font-sans"
+                      >
+                        <Icon name="queue_music" className="text-sm" />
+                        {playlist.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {playlists.length === 0 && (
+                <div className="mt-3 pt-3 border-t border-yellow-500/10">
+                  <p className="text-xs text-yellow-400/70 mb-2 font-sans">
+                    Create a playlist to save this track
+                  </p>
+                  <button
+                    onClick={() => setIsCreatingPlaylist(true)}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-xs text-yellow-400 hover:text-yellow-300 transition-colors font-sans"
+                  >
+                    <Icon name="add" className="text-sm" />
+                    Create Playlist
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
-      <div className="mt-auto p-4 border-t border-white/5">
+      <div className="mt-auto p-4 border-t border-white/5 flex-shrink-0">
         {!isAuthenticated ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed border-white/10 bg-white/[0.02] p-6 text-center">
             <Icon name="lock" className="text-4xl md:text-5xl text-white/40" />

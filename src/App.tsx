@@ -7,7 +7,7 @@ import { AudioTrack, WaveformPoint, BackendStatus } from './types';
 import api, { ApiAudioTrack, ApiChordPrediction } from './services/api';
 import authService, { AuthUser } from './services/auth';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
-import { generatePlaceholderWaveform } from './utils/waveform';
+
 
 const mapApiTrackToAudioTrack = (
   apiTrack: ApiAudioTrack,
@@ -40,10 +40,9 @@ const App: React.FC = () => {
     name: string;
     tracks: AudioTrack[];
   } | null>(null);
+  const [looseTrack, setLooseTrack] = useState<AudioTrack | null>(null);
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
-  const [waveformData, setWaveformData] = useState<WaveformPoint[]>(
-    generatePlaceholderWaveform(150)
-  );
+  const [waveformData, setWaveformData] = useState<WaveformPoint[]>([]);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -60,8 +59,10 @@ const App: React.FC = () => {
 
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [lastLatency, setLastLatency] = useState<number | null>(null);
 
-  const activeTrack = activePlaylist?.tracks.find((t) => t.id === activeTrackId);
+  const activeTrack = activePlaylist?.tracks.find((t) => t.id === activeTrackId) 
+    || (looseTrack && looseTrack.id === activeTrackId ? looseTrack : undefined);
   const duration = activeTrack?.durationSeconds || 0;
 
   const audioPlayerRef = useRef<{
@@ -125,13 +126,21 @@ const App: React.FC = () => {
   useEffect(() => {
     const checkBackend = async () => {
       try {
+        const startTime = performance.now();
         const health = await api.healthCheck();
+        const endTime = performance.now();
+        const latency = Math.round(endTime - startTime);
+        setLastLatency(latency);
         setBackendStatus(health.status === 'ok' ? 'connected' : 'disconnected');
       } catch {
         setBackendStatus('disconnected');
+        setLastLatency(null);
       }
     };
     checkBackend();
+
+    const interval = setInterval(checkBackend, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -206,6 +215,7 @@ const App: React.FC = () => {
       setCurrentTime(0);
       setLoopStart(0);
       setLoopEnd(activeTrack.durationSeconds);
+      setWaveformData([]);
     }
   }, [activeTrackId, activeTrack]);
 
@@ -223,7 +233,7 @@ const App: React.FC = () => {
         const response = await api.uploadAudio(file, activePlaylistId || undefined);
         const track = mapApiTrackToAudioTrack(response.track, response.chords);
 
-        if (activePlaylist) {
+        if (activePlaylistId && activePlaylist) {
           setActivePlaylist((prev) =>
             prev
               ? {
@@ -232,6 +242,15 @@ const App: React.FC = () => {
                 }
               : null
           );
+          setPlaylists((prev) =>
+            prev.map((p) =>
+              p.id === activePlaylistId
+                ? { ...p, trackCount: p.trackCount + 1 }
+                : p
+            )
+          );
+        } else {
+          setLooseTrack(track);
         }
 
         setActiveTrackId(track.id);
@@ -239,14 +258,6 @@ const App: React.FC = () => {
         setLoopStart(0);
         setLoopEnd(track.durationSeconds);
         setIsSidebarOpen(false);
-
-        setPlaylists((prev) =>
-          prev.map((p) =>
-            p.id === activePlaylistId
-              ? { ...p, trackCount: p.trackCount + 1 }
-              : p
-          )
-        );
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Upload failed';
         setError(message);
@@ -351,6 +362,38 @@ const App: React.FC = () => {
     [activePlaylistId, playlists, backendStatus]
   );
 
+  const handleMoveTrackToPlaylist = useCallback(
+    async (trackId: string, playlistId: string) => {
+      if (backendStatus !== 'connected') return;
+
+      try {
+        const response = await api.moveTrackToPlaylist(trackId, playlistId);
+        const movedTrack = mapApiTrackToAudioTrack(response.track, response.chords);
+
+        setLooseTrack(null);
+
+        setPlaylists((prev) =>
+          prev.map((p) =>
+            p.id === playlistId ? { ...p, trackCount: p.trackCount + 1 } : p
+          )
+        );
+
+        if (activePlaylistId === playlistId && activePlaylist) {
+          setActivePlaylist((prev) =>
+            prev ? { ...prev, tracks: [movedTrack, ...prev.tracks] } : null
+          );
+        }
+
+        setActivePlaylistId(playlistId);
+        setActiveTrackId(trackId);
+      } catch (err) {
+        console.error('Move track error:', err);
+        setError('Failed to move track to playlist');
+      }
+    },
+    [backendStatus, activePlaylistId, activePlaylist]
+  );
+
   const handleSeek = (time: number) => {
     setCurrentTime(time);
     audioPlayer.seek(time);
@@ -405,6 +448,7 @@ const App: React.FC = () => {
         onMenuClick={() => setIsSidebarOpen(true)}
         onLogin={handleLogin}
         onLogout={handleLogout}
+        lastLatency={lastLatency}
       />
 
       {error && (
@@ -444,8 +488,21 @@ const App: React.FC = () => {
                 }
               : null
           }
+          looseTrack={
+            looseTrack
+              ? {
+                  id: looseTrack.id,
+                  name: looseTrack.name,
+                  duration: looseTrack.duration,
+                  status: looseTrack.status,
+                }
+              : null
+          }
           activeTrackId={activeTrackId}
           onPlaylistSelect={(id) => {
+            if (audioPlayer.isPlaying) {
+              audioPlayer.pause();
+            }
             setActivePlaylistId(id);
             setActiveTrackId(null);
             setIsSidebarOpen(false);
@@ -458,6 +515,7 @@ const App: React.FC = () => {
             setIsSidebarOpen(false);
           }}
           onTrackDelete={handleTrackDelete}
+          onMoveTrackToPlaylist={handleMoveTrackToPlaylist}
           onFileUpload={handleFileUpload}
           isUploading={isUploading}
           isOpen={isSidebarOpen}
@@ -483,7 +541,7 @@ const App: React.FC = () => {
                     Backend server is not running. Start it with:
                   </p>
                   <code className="block mt-2 bg-black/30 rounded px-3 py-2 text-xs text-white/70 font-mono">
-                    cd backend && python -m uvicorn app.main:app --reload
+                    cd backend && python run_http2.py
                   </code>
                 </div>
               )}

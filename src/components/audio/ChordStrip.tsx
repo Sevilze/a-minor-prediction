@@ -56,7 +56,7 @@ export const ChordStrip: React.FC<ChordStripProps> = ({
 
       <div
         ref={scrollContainerRef}
-        className="relative w-full overflow-x-auto pb-2 hide-scrollbar flex gap-2 scroll-smooth"
+        className="relative w-full overflow-x-auto overflow-y-visible pt-8 pb-2 hide-scrollbar flex gap-2 scroll-smooth"
       >
         {chords.map((chord, index) => {
           const isActive =
@@ -87,7 +87,7 @@ export const ChordStrip: React.FC<ChordStripProps> = ({
               `}
             >
               <div
-                className={`absolute -top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 px-2 py-0.5 rounded-full bg-background-dark border border-white/10 text-[9px] font-mono whitespace-nowrap ${
+                className={`absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full mb-1 px-2 py-0.5 rounded-full bg-background-dark border border-white/10 text-[9px] font-mono whitespace-nowrap ${
                   isActive
                     ? 'text-primary border-primary/30 bg-primary/10'
                     : 'text-white/50'

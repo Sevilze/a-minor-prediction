@@ -128,6 +128,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               zoomLevel={zoomLevel}
               currentTime={currentTime}
               duration={duration}
+              onSeek={onSeek}
             />
           </div>
 
@@ -174,15 +175,22 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             <button
               onClick={onPlayToggle}
               disabled={duration === 0 || isLoading}
-              className="pointer-events-auto flex shrink-0 items-center justify-center rounded-full w-16 h-16 md:w-24 md:h-24 bg-white text-background-dark hover:scale-105 transition-all shadow-[0_0_40px_rgba(255,255,255,0.15)] active:scale-95 pl-1 disabled:opacity-50 disabled:hover:scale-100"
+              className="pointer-events-auto flex flex-col shrink-0 items-center justify-center rounded-full w-16 h-16 md:w-24 md:h-24 bg-white text-background-dark hover:scale-105 transition-all shadow-[0_0_40px_rgba(255,255,255,0.15)] active:scale-95 disabled:opacity-50 disabled:hover:scale-100 relative"
             >
               {isLoading ? (
-                <div className="w-8 h-8 md:w-12 md:h-12 rounded-full border-4 border-gray-300 border-t-gray-600 animate-spin" />
+                <>
+                  <div className="w-8 h-8 md:w-10 md:h-10 rounded-full border-4 border-gray-200 border-t-primary animate-spin" />
+                  <div className="absolute -bottom-8 md:-bottom-10 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                    <span className="text-[10px] md:text-xs font-medium text-white/70 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-full">
+                      Loading audio...
+                    </span>
+                  </div>
+                </>
               ) : (
                 <Icon
                   name={isPlaying ? 'pause' : 'play_arrow'}
                   filled
-                  className="text-4xl md:text-6xl"
+                  className="text-4xl md:text-6xl pl-1"
                 />
               )}
             </button>
