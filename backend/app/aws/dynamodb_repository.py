@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -6,10 +5,10 @@ import aioboto3
 from botocore.exceptions import ClientError
 
 from .models import (
-    AudioProjectEntry,
+    AudioTrackEntry,
     ChordPredictionEntry,
+    PlaylistEntry,
     User,
-    WaveformDataEntry,
 )
 
 
@@ -21,15 +20,15 @@ class DynamoDbRepository:
     def __init__(
         self,
         users_table: str,
-        projects_table: str,
-        chords_table: str,
-        waveform_table: str,
+        tracks_table: str,
+        predictions_table: str,
+        playlists_table: str,
         region: str,
     ):
         self.users_table = users_table
-        self.projects_table = projects_table
-        self.chords_table = chords_table
-        self.waveform_table = waveform_table
+        self.tracks_table = tracks_table
+        self.predictions_table = predictions_table
+        self.playlists_table = playlists_table
         self.region = region
         self._session = aioboto3.Session()
 
@@ -83,172 +82,191 @@ class DynamoDbRepository:
         except ClientError as e:
             raise RepositoryError(f"Failed to update user: {e}")
 
-    async def create_project(self, project: AudioProjectEntry) -> None:
+    async def create_track(self, track: AudioTrackEntry) -> None:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.projects_table)
-                await table.put_item(Item=project.to_dynamodb_item())
+                table = await dynamodb.Table(self.tracks_table)
+                await table.put_item(Item=track.to_dynamodb_item())
         except ClientError as e:
-            raise RepositoryError(f"Failed to create project: {e}")
+            raise RepositoryError(f"Failed to create track: {e}")
 
-    async def get_project_by_id(self, project_id: str) -> Optional[AudioProjectEntry]:
+    async def get_track_by_id(self, track_id: str) -> Optional[AudioTrackEntry]:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.projects_table)
-                response = await table.get_item(Key={"id": project_id})
+                table = await dynamodb.Table(self.tracks_table)
+                response = await table.get_item(Key={"id": track_id})
                 if "Item" not in response:
                     return None
-                return AudioProjectEntry.from_dynamodb_item(response["Item"])
+                return AudioTrackEntry.from_dynamodb_item(response["Item"])
         except ClientError as e:
-            raise RepositoryError(f"Failed to get project: {e}")
+            raise RepositoryError(f"Failed to get track: {e}")
 
-    async def get_user_projects(self, user_id: UUID) -> list[AudioProjectEntry]:
+    async def get_user_tracks(self, user_id: UUID) -> list[AudioTrackEntry]:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.projects_table)
+                table = await dynamodb.Table(self.tracks_table)
                 response = await table.query(
                     IndexName="user_id-index",
                     KeyConditionExpression="user_id = :uid",
                     ExpressionAttributeValues={":uid": str(user_id)},
                 )
                 return [
-                    AudioProjectEntry.from_dynamodb_item(item)
+                    AudioTrackEntry.from_dynamodb_item(item)
                     for item in response.get("Items", [])
                 ]
         except ClientError as e:
-            raise RepositoryError(f"Failed to get user projects: {e}")
+            raise RepositoryError(f"Failed to get user tracks: {e}")
 
-    async def update_project(self, project: AudioProjectEntry) -> None:
+    async def update_track(self, track: AudioTrackEntry) -> None:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.projects_table)
-                await table.put_item(Item=project.to_dynamodb_item())
+                table = await dynamodb.Table(self.tracks_table)
+                await table.put_item(Item=track.to_dynamodb_item())
         except ClientError as e:
-            raise RepositoryError(f"Failed to update project: {e}")
+            raise RepositoryError(f"Failed to update track: {e}")
 
-    async def delete_project(self, project_id: str) -> None:
+    async def delete_track(self, track_id: str) -> None:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.projects_table)
-                await table.delete_item(Key={"id": project_id})
+                table = await dynamodb.Table(self.tracks_table)
+                await table.delete_item(Key={"id": track_id})
         except ClientError as e:
-            raise RepositoryError(f"Failed to delete project: {e}")
+            raise RepositoryError(f"Failed to delete track: {e}")
 
-    async def create_chord_predictions(
-        self, predictions: list[ChordPredictionEntry]
-    ) -> None:
-        if not predictions:
+    async def create_predictions(self, entry: ChordPredictionEntry) -> None:
+        if not entry.chords:
             return
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.chords_table)
-                async with table.batch_writer() as batch:
-                    for pred in predictions:
-                        await batch.put_item(Item=pred.to_dynamodb_item())
+                table = await dynamodb.Table(self.predictions_table)
+                await table.put_item(Item=entry.to_dynamodb_item())
         except ClientError as e:
-            raise RepositoryError(f"Failed to create chord predictions: {e}")
+            raise RepositoryError(f"Failed to create predictions: {e}")
 
-    async def get_project_chords(self, project_id: str) -> list[ChordPredictionEntry]:
+    async def get_track_predictions(
+        self, track_id: str
+    ) -> Optional[ChordPredictionEntry]:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.chords_table)
-                response = await table.query(
-                    KeyConditionExpression="project_id = :pid",
-                    ExpressionAttributeValues={":pid": project_id},
+                table = await dynamodb.Table(self.predictions_table)
+                response = await table.get_item(Key={"track_id": track_id})
+                if "Item" not in response:
+                    return None
+                return ChordPredictionEntry.from_dynamodb_item(response["Item"])
+        except ClientError as e:
+            raise RepositoryError(f"Failed to get predictions: {e}")
+
+    async def delete_track_predictions(self, track_id: str) -> None:
+        try:
+            async with self._session.resource(
+                "dynamodb", region_name=self.region
+            ) as dynamodb:
+                table = await dynamodb.Table(self.predictions_table)
+                await table.delete_item(Key={"track_id": track_id})
+        except ClientError as e:
+            raise RepositoryError(f"Failed to delete predictions: {e}")
+
+    async def delete_user_tracks(self, user_id: UUID) -> None:
+        tracks = await self.get_user_tracks(user_id)
+        for track in tracks:
+            await self.delete_track_predictions(track.id)
+            await self.delete_track(track.id)
+
+    async def create_playlist(self, playlist: PlaylistEntry) -> None:
+        try:
+            async with self._session.resource(
+                "dynamodb", region_name=self.region
+            ) as dynamodb:
+                table = await dynamodb.Table(self.playlists_table)
+                await table.put_item(Item=playlist.to_dynamodb_item())
+        except ClientError as e:
+            raise RepositoryError(f"Failed to create playlist: {e}")
+
+    async def get_playlist_by_id(self, playlist_id: str) -> Optional[PlaylistEntry]:
+        try:
+            async with self._session.resource(
+                "dynamodb", region_name=self.region
+            ) as dynamodb:
+                table = await dynamodb.Table(self.playlists_table)
+                response = await table.get_item(Key={"id": playlist_id})
+                if "Item" not in response:
+                    return None
+                return PlaylistEntry.from_dynamodb_item(response["Item"])
+        except ClientError as e:
+            raise RepositoryError(f"Failed to get playlist: {e}")
+
+    async def get_user_playlists(self, user_id: str) -> list[PlaylistEntry]:
+        try:
+            async with self._session.resource(
+                "dynamodb", region_name=self.region
+            ) as dynamodb:
+                table = await dynamodb.Table(self.playlists_table)
+                response = await table.scan(
+                    FilterExpression="user_id = :uid",
+                    ExpressionAttributeValues={":uid": str(user_id)},
                 )
                 return [
-                    ChordPredictionEntry.from_dynamodb_item(item)
+                    PlaylistEntry.from_dynamodb_item(item)
                     for item in response.get("Items", [])
                 ]
         except ClientError as e:
-            raise RepositoryError(f"Failed to get chords: {e}")
+            raise RepositoryError(f"Failed to get user playlists: {e}")
 
-    async def delete_project_chords(self, project_id: str) -> None:
+    async def update_playlist(self, playlist: PlaylistEntry) -> None:
         try:
-            chords = await self.get_project_chords(project_id)
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.chords_table)
-                async with table.batch_writer() as batch:
-                    for chord in chords:
-                        await batch.delete_item(
-                            Key={
-                                "project_id": project_id,
-                                "timestamp": Decimal(str(chord.timestamp)),
-                            }
-                        )
+                table = await dynamodb.Table(self.playlists_table)
+                await table.put_item(Item=playlist.to_dynamodb_item())
         except ClientError as e:
-            raise RepositoryError(f"Failed to delete chords: {e}")
+            raise RepositoryError(f"Failed to update playlist: {e}")
 
-    async def create_waveform_data(
-        self, waveform_points: list[WaveformDataEntry]
-    ) -> None:
-        if not waveform_points:
-            return
+    async def delete_playlist(self, playlist_id: str) -> None:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.waveform_table)
-                async with table.batch_writer() as batch:
-                    for point in waveform_points:
-                        await batch.put_item(Item=point.to_dynamodb_item())
+                table = await dynamodb.Table(self.playlists_table)
+                await table.delete_item(Key={"id": playlist_id})
         except ClientError as e:
-            raise RepositoryError(f"Failed to create waveform data: {e}")
+            raise RepositoryError(f"Failed to delete playlist: {e}")
 
-    async def get_project_waveform(self, project_id: str) -> list[WaveformDataEntry]:
+    async def get_playlist_tracks(self, playlist_id: str) -> list[AudioTrackEntry]:
         try:
             async with self._session.resource(
                 "dynamodb", region_name=self.region
             ) as dynamodb:
-                table = await dynamodb.Table(self.waveform_table)
-                response = await table.query(
-                    KeyConditionExpression="project_id = :pid",
-                    ExpressionAttributeValues={":pid": project_id},
+                table = await dynamodb.Table(self.tracks_table)
+                response = await table.scan(
+                    FilterExpression="playlist_id = :pid",
+                    ExpressionAttributeValues={":pid": playlist_id},
                 )
                 return [
-                    WaveformDataEntry.from_dynamodb_item(item)
+                    AudioTrackEntry.from_dynamodb_item(item)
                     for item in response.get("Items", [])
                 ]
         except ClientError as e:
-            raise RepositoryError(f"Failed to get waveform: {e}")
+            raise RepositoryError(f"Failed to get playlist tracks: {e}")
 
-    async def delete_project_waveform(self, project_id: str) -> None:
-        try:
-            waveform = await self.get_project_waveform(project_id)
-            async with self._session.resource(
-                "dynamodb", region_name=self.region
-            ) as dynamodb:
-                table = await dynamodb.Table(self.waveform_table)
-                async with table.batch_writer() as batch:
-                    for point in waveform:
-                        await batch.delete_item(
-                            Key={
-                                "project_id": project_id,
-                                "time": Decimal(str(point.time)),
-                            }
-                        )
-        except ClientError as e:
-            raise RepositoryError(f"Failed to delete waveform: {e}")
-
-    async def delete_user_projects(self, user_id: UUID) -> None:
-        projects = await self.get_user_projects(user_id)
-        for project in projects:
-            await self.delete_project_chords(project.id)
-            await self.delete_project_waveform(project.id)
-            await self.delete_project(project.id)
+    async def delete_playlist_with_tracks(self, playlist_id: str, user_id: str) -> None:
+        tracks = await self.get_playlist_tracks(playlist_id)
+        for track in tracks:
+            if track.user_id == user_id:
+                await self.delete_track_predictions(track.id)
+                await self.delete_track(track.id)
+        await self.delete_playlist(playlist_id)

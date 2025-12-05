@@ -1,8 +1,9 @@
-import numpy as np
-import librosa
-import soundfile as sf
 from io import BytesIO
-from typing import Tuple, Optional
+from typing import Optional, Tuple
+
+import librosa
+import numpy as np
+import soundfile as sf
 
 from ..config import get_settings
 
@@ -67,30 +68,6 @@ class AudioFeatureExtractor:
 def get_audio_duration(audio: np.ndarray, sample_rate: int = None) -> float:
     sample_rate = sample_rate or settings.sample_rate
     return len(audio) / sample_rate
-
-
-def generate_waveform_data(
-    audio: np.ndarray, num_points: int = 150, sample_rate: int = None
-) -> list:
-    sample_rate = sample_rate or settings.sample_rate
-    duration = len(audio) / sample_rate
-    samples_per_point = len(audio) // num_points
-
-    waveform_data = []
-    for i in range(num_points):
-        start_idx = i * samples_per_point
-        end_idx = min(start_idx + samples_per_point, len(audio))
-        segment = audio[start_idx:end_idx]
-
-        rms = np.sqrt(np.mean(segment**2))
-        amplitude = min(100, max(5, rms * 1000))
-
-        time_point = (i / num_points) * duration
-        waveform_data.append(
-            {"time": round(time_point, 2), "amplitude": round(amplitude, 2)}
-        )
-
-    return waveform_data
 
 
 def estimate_bpm(audio: np.ndarray, sample_rate: int = None) -> int:

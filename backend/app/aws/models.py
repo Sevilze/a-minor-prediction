@@ -61,9 +61,52 @@ class User:
 
 
 @dataclass
-class AudioProjectEntry:
+class PlaylistEntry:
     id: str
-    user_id: UUID
+    user_id: str
+    name: str
+    description: Optional[str] = None
+    track_ids: list[str] = field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+
+    def __post_init__(self):
+        if not self.created_at:
+            self.created_at = datetime.utcnow().isoformat()
+        if not self.updated_at:
+            self.updated_at = datetime.utcnow().isoformat()
+
+    def to_dynamodb_item(self) -> dict[str, Any]:
+        item = {
+            "id": self.id,
+            "user_id": self.user_id,
+            "name": self.name,
+            "track_ids": self.track_ids,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+        if self.description:
+            item["description"] = self.description
+        return item
+
+    @classmethod
+    def from_dynamodb_item(cls, item: dict[str, Any]) -> "PlaylistEntry":
+        return cls(
+            id=item["id"],
+            user_id=item["user_id"],
+            name=item["name"],
+            description=item.get("description"),
+            track_ids=item.get("track_ids", []),
+            created_at=item["created_at"],
+            updated_at=item["updated_at"],
+        )
+
+
+@dataclass
+class AudioTrackEntry:
+    id: str
+    user_id: str
+    playlist_id: Optional[str]
     name: str
     s3_key: str
     s3_bucket: str
@@ -78,9 +121,9 @@ class AudioProjectEntry:
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
     def to_dynamodb_item(self) -> dict[str, Any]:
-        return {
+        item = {
             "id": self.id,
-            "user_id": str(self.user_id),
+            "user_id": self.user_id,
             "name": self.name,
             "s3_key": self.s3_key,
             "s3_bucket": self.s3_bucket,
@@ -94,12 +137,16 @@ class AudioProjectEntry:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+        if self.playlist_id:
+            item["playlist_id"] = self.playlist_id
+        return item
 
     @classmethod
-    def from_dynamodb_item(cls, item: dict[str, Any]) -> "AudioProjectEntry":
+    def from_dynamodb_item(cls, item: dict[str, Any]) -> "AudioTrackEntry":
         return cls(
             id=item["id"],
-            user_id=UUID(item["user_id"]),
+            user_id=item["user_id"],
+            playlist_id=item.get("playlist_id"),
             name=item["name"],
             s3_key=item["s3_key"],
             s3_bucket=item["s3_bucket"],
@@ -128,24 +175,21 @@ class AudioProjectEntry:
 
 
 @dataclass
-class ChordPredictionEntry:
-    project_id: str
+class ChordPrediction:
     timestamp: float
     chord: str
     confidence: float
 
-    def to_dynamodb_item(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
-            "project_id": self.project_id,
-            "timestamp": Decimal(str(self.timestamp)),
+            "timestamp": str(self.timestamp),
             "chord": self.chord,
-            "confidence": Decimal(str(self.confidence)),
+            "confidence": str(self.confidence),
         }
 
     @classmethod
-    def from_dynamodb_item(cls, item: dict[str, Any]) -> "ChordPredictionEntry":
+    def from_dict(cls, item: dict[str, Any]) -> "ChordPrediction":
         return cls(
-            project_id=item["project_id"],
             timestamp=float(item["timestamp"]),
             chord=item["chord"],
             confidence=float(item["confidence"]),
@@ -159,24 +203,21 @@ class ChordPredictionEntry:
 
 
 @dataclass
-class WaveformDataEntry:
-    project_id: str
-    time: float
-    amplitude: float
+class ChordPredictionEntry:
+    track_id: str
+    chords: list[ChordPrediction] = field(default_factory=list)
 
     def to_dynamodb_item(self) -> dict[str, Any]:
         return {
-            "project_id": self.project_id,
-            "time": Decimal(str(self.time)),
-            "amplitude": Decimal(str(self.amplitude)),
+            "track_id": self.track_id,
+            "chords": [c.to_dict() for c in self.chords],
         }
 
     @classmethod
-    def from_dynamodb_item(cls, item: dict[str, Any]) -> "WaveformDataEntry":
+    def from_dynamodb_item(cls, item: dict[str, Any]) -> "ChordPredictionEntry":
         return cls(
-            project_id=item["project_id"],
-            time=float(item["time"]),
-            amplitude=float(item["amplitude"]),
+            track_id=item["track_id"],
+            chords=[ChordPrediction.from_dict(c) for c in item.get("chords", [])],
         )
 
 

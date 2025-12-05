@@ -144,9 +144,9 @@ jobs:
             --set-env-vars="AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
             --set-env-vars="S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \
             --set-env-vars="DYNAMODB_USERS_TABLE=${{ secrets.DYNAMODB_USERS_TABLE }}" \
-            --set-env-vars="DYNAMODB_PROJECTS_TABLE=${{ secrets.DYNAMODB_PROJECTS_TABLE }}" \
-            --set-env-vars="DYNAMODB_CHORDS_TABLE=${{ secrets.DYNAMODB_CHORDS_TABLE }}" \
-            --set-env-vars="DYNAMODB_WAVEFORM_TABLE=${{ secrets.DYNAMODB_WAVEFORM_TABLE }}" \
+            --set-env-vars="DYNAMODB_TRACKS_TABLE=${{ secrets.DYNAMODB_TRACKS_TABLE }}" \
+            --set-env-vars="DYNAMODB_PREDICTIONS_TABLE=${{ secrets.DYNAMODB_PREDICTIONS_TABLE }}" \
+            --set-env-vars="DYNAMODB_PLAYLISTS_TABLE=${{ secrets.DYNAMODB_PLAYLISTS_TABLE }}" \
             --set-env-vars="COGNITO_USER_POOL_ID=${{ secrets.COGNITO_USER_POOL_ID }}" \
             --set-env-vars="COGNITO_CLIENT_ID=${{ secrets.COGNITO_CLIENT_ID }}" \
             --set-env-vars="COGNITO_CLIENT_SECRET=${{ secrets.COGNITO_CLIENT_SECRET }}" \

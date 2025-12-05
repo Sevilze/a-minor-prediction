@@ -30,9 +30,9 @@ async def lifespan(app: FastAPI):
 
     app.state.db_repo = DynamoDbRepository(
         users_table=settings.dynamodb_users_table,
-        projects_table=settings.dynamodb_projects_table,
-        chords_table=settings.dynamodb_chords_table,
-        waveform_table=settings.dynamodb_waveform_table,
+        tracks_table=settings.dynamodb_tracks_table,
+        predictions_table=settings.dynamodb_predictions_table,
+        playlists_table=settings.dynamodb_playlists_table,
         region=settings.aws_region,
     )
 
@@ -73,18 +73,19 @@ app = FastAPI(
 )
 
 app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.jwt_secret,
-    same_site="lax",
-    https_only=False,
-)
-
-app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+is_localhost = "localhost" in settings.base_url or "127.0.0.1" in settings.base_url
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.jwt_secret,
+    same_site="lax",
+    https_only=not is_localhost,
 )
 
 app.include_router(audio_router)

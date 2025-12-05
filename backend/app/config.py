@@ -14,14 +14,14 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "ChordAI"
-    debug: bool = True
+    debug: bool = False
 
     aws_region: str
     s3_bucket_name: str
     dynamodb_users_table: str
-    dynamodb_projects_table: str
-    dynamodb_chords_table: str
-    dynamodb_waveform_table: str
+    dynamodb_tracks_table: str
+    dynamodb_predictions_table: str
+    dynamodb_playlists_table: str
 
     cognito_user_pool_id: str
     cognito_client_id: str

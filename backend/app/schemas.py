@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -13,16 +13,9 @@ class ChordPredictionSchema(BaseModel):
         from_attributes = True
 
 
-class WaveformDataSchema(BaseModel):
-    time: float
-    amplitude: float
-
-    class Config:
-        from_attributes = True
-
-
-class ProjectBase(BaseModel):
+class TrackBase(BaseModel):
     id: str
+    playlist_id: Optional[str] = None
     name: str
     duration: str
     duration_seconds: float
@@ -33,32 +26,61 @@ class ProjectBase(BaseModel):
     time_signature: int
 
 
-class ProjectResponse(BaseModel):
+class TrackResponse(BaseModel):
     success: bool
-    project: ProjectBase
+    track: TrackBase
     chords: List[ChordPredictionSchema]
-    waveform: List[WaveformDataSchema]
 
 
-class ProjectListItem(BaseModel):
+class TrackListItem(BaseModel):
     id: str
     name: str
     duration: str
-    size: str
     status: str
-    type: str
 
 
-class ProjectListResponse(BaseModel):
+class PlaylistBase(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    track_count: int
+    created_at: str
+    updated_at: str
+
+
+class PlaylistResponse(BaseModel):
     success: bool
-    projects: List[ProjectListItem]
+    playlist: PlaylistBase
+    tracks: List[TrackListItem]
+
+
+class PlaylistListItem(BaseModel):
+    id: str
+    name: str
+    track_count: int
+    updated_at: str
+
+
+class PlaylistListResponse(BaseModel):
+    success: bool
+    playlists: List[PlaylistListItem]
+
+
+class CreatePlaylistRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class UpdatePlaylistRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    track_ids: Optional[List[str]] = None
 
 
 class UploadResponse(BaseModel):
     success: bool
-    project: ProjectBase
+    track: TrackBase
     chords: List[ChordPredictionSchema]
-    waveform: List[WaveformDataSchema]
 
 
 class ErrorResponse(BaseModel):

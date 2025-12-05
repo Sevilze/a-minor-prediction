@@ -1,21 +1,20 @@
-from .s3_service import S3Service, S3ServiceError
-from .dynamodb_repository import DynamoDbRepository, RepositoryError
-from .cognito_service import CognitoService, CognitoError
-from .jwt_service import JWTService, JWTError
 from .auth_middleware import (
     AuthenticatedUser,
     OptionalUser,
-    require_auth,
     optional_auth,
+    require_auth,
 )
+from .cognito_service import CognitoError, CognitoService
+from .dynamodb_repository import DynamoDbRepository, RepositoryError
+from .jwt_service import JWTError, JWTService
 from .models import (
-    User,
-    AudioProjectEntry,
-    ChordPredictionEntry,
-    WaveformDataEntry,
+    AudioTrackEntry,
     AuthUser,
+    ChordPredictionEntry,
     JWTClaims,
+    User,
 )
+from .s3_service import S3Service, S3ServiceError
 
 __all__ = [
     "S3Service",
@@ -31,9 +30,8 @@ __all__ = [
     "require_auth",
     "optional_auth",
     "User",
-    "AudioProjectEntry",
+    "AudioTrackEntry",
     "ChordPredictionEntry",
-    "WaveformDataEntry",
     "AuthUser",
     "JWTClaims",
 ]
