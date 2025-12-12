@@ -1,0 +1,4 @@
+FROM scratch
+
+COPY best_model.pt /models/best_model.pt
+COPY checkpoints/vocab.json /models/vocab.json
